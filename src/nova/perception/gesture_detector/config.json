@@ -1,0 +1,41 @@
+{
+    "sistema": {
+        "version": "2.0",
+        "nombre": "Sistema Unificado de Control por Gestos"
+    },
+    "deteccion": {
+        "min_detection_confidence": 0.7,
+        "min_tracking_confidence": 0.5,
+        "max_num_hands": 2
+    },
+    "gestos": {
+        "distancia_pinza": 40,
+        "factor_zoom_in": 1.5,
+        "factor_zoom_out": 0.7,
+        "suavizado_movimiento": 5,
+        "doble_click_ventana": 0.5,
+        "tiempo_calibracion": 3.0
+    },
+    "calibracion": {
+        "distancia_calibracion": 50,
+        "tiempo_captura": 3
+    },
+    "ventana": {
+        "resize_factor": 0.5,
+        "window_pos_x": 50,
+        "window_pos_y": 50
+    },
+    "pyautogui": {
+        "pause_time": 0.01,
+        "fail_safe": true
+    },
+    "logging": {
+        "level": "INFO",
+        "archivo": "detector_gestos.log"
+    },
+    "interfaz": {
+        "mostrar_por_defecto": true,
+        "mostrar_coordenadas": true,
+        "mostrar_fps": false
+    }
+}

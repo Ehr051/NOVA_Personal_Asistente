@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "nova-perception": {
+      "command": "python",
+      "args": ["-m", "nova.perception.mcp_server"],
+      "description": "Nova Perception MCP - provides gesture, face, emotion, and screen data"
+    }
+  }
+}

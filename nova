@@ -1,0 +1,510 @@
+#!/usr/bin/env python3
+"""
+Nova CLI - Interfaz de línea de comandos para gestionar skills, agents y configuración
+"""
+
+import argparse
+import sys
+import os
+import subprocess
+import json
+from pathlib import Path
+
+# Añadir el directorio src al path para importaciones
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="nova",
+        description="Nova Personal Assistant - CLI para gestionar skills, agents y configuración",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Ejemplos de uso:
+  nova chat                          # Sesión REPL interactiva (slash commands + LLM)
+  nova skill list                    # Listar skills disponibles
+  nova skill install github          # Instalar skill de GitHub
+  nova skill optimize               # Optimizar skills basado en uso
+  nova agent morning                # Ejecutar agente de briefing matutino
+  nova agent research "IA en 2026"  # Ejecutar agente de investigación
+  nova agent code "crea función fibonacci"  # Ejecutar agente de código
+        """
+    )
+    
+    subparsers = parser.add_subparsers(dest='command', help='Comandos disponibles')
+    
+    # ========== CHAT REPL ==========
+    subparsers.add_parser('chat', help='Sesión REPL interactiva en terminal (estilo claude/opencode)')
+
+    # ========== SKILLS COMMANDS ==========
+    skills_parser = subparsers.add_parser('skill', help='Gestionar skills de Nova')
+    skills_subparsers = skills_parser.add_subparsers(dest='skill_action', help='Acciones para skills')
+    
+    # skill list
+    skills_subparsers.add_parser('list', help='Listar todos los skills disponibles')
+    
+    # skill search
+    search_parser = skills_subparsers.add_parser('search', help='Buscar skills en repositorios externos')
+    search_parser.add_argument('query', help='Término de búsqueda')
+    
+    # skill install
+    install_parser = skills_subparsers.add_parser('install', help='Instalar un skill')
+    install_parser.add_argument('name', help='Nombre del skill a instalar')
+    install_parser.add_argument('--source', choices=['local', 'github', 'openclaw', 'hermes'], 
+                              default='local', help='Fuente del skill')
+    
+    # skill remove
+    remove_parser = skills_subparsers.add_parser('remove', help='Remover un skill instalado')
+    remove_parser.add_argument('name', help='Nombre del skill a remover')
+    
+    # skill update
+    skills_subparsers.add_parser('update', help='Actualizar todos los skills instalados')
+    
+    # skill optimize
+    skills_subparsers.add_parser('optimize', help='Optimizar skills basado en datos de uso')
+    
+    # skill info
+    info_parser = skills_subparsers.add_parser('info', help='Mostrar información detallada de un skill')
+    info_parser.add_argument('name', help='Nombre del skill')
+    
+    # ========== AGENT COMMANDS ==========
+    agent_parser = subparsers.add_parser('agent', help='Ejecutar agentes especializados de Nova')
+    agent_subparsers = agent_parser.add_subparsers(dest='agent_action', help='Acciones para agents')
+    
+    # agent list
+    agent_subparsers.add_parser('list', help='Listar todos los agents disponibles')
+    
+    # agent morning
+    agent_subparsers.add_parser('morning', help='Ejecutar agente de briefing matutino')
+    
+    # agent research
+    research_parser = agent_subparsers.add_parser('research', help='Ejecutar agente de investigación profunda')
+    research_parser.add_argument('topic', help='Tema a investigar')
+    research_parser.add_argument('--depth', choices=['quick', 'standard', 'deep'], 
+                               default='standard', help='Profundidad de la investigación')
+    
+    # agent code
+    code_parser = agent_subparsers.add_parser('code', help='Ejecutar agente especializado en código')
+    code_parser.add_argument('task', help='Tarea de programación a realizar')
+    code_parser.add_argument('--language', help='Lenguaje de programación (opcional)')
+    
+    # agent orchestrator
+    orch_parser = agent_subparsers.add_parser('orchestrator', help='Ejecutar agente orquestador multi-turno')
+    orch_parser.add_argument('goal', help='Objetivo a lograr')
+    orch_parser.add_argument('--max-turns', type=int, default=5, 
+                           help='Número máximo de turnos de razonamiento')
+    
+    # agent create
+    create_parser = agent_subparsers.add_parser('create', help='Crear un nuevo agent personalizado')
+    create_parser.add_argument('name', help='Nombre del nuevo agent')
+    create_parser.add_argument('type', choices=['assistant', 'specialized', 'workflow'], 
+                             help='Tipo de agent a crear')
+    
+    # ========== CONFIG COMMANDS ==========
+    config_parser = subparsers.add_parser('config', help='Gestionar configuración de Nova')
+    config_subparsers = config_parser.add_subparsers(dest='config_action', help='Acciones de configuración')
+    
+    # config show
+    config_subparsers.add_parser('show', help='Mostrar configuración actual')
+    
+    # config set
+    config_set_parser = config_subparsers.add_parser('set', help='Establecer un valor de configuración')
+    config_set_parser.add_argument('key', help='Clave de configuración')
+    config_set_parser.add_argument('value', help='Valor a establecer')
+    
+    # ========== SYSTEM COMMANDS ==========
+    system_parser = subparsers.add_parser('system', help='Comandos del sistema Nova')
+    system_subparsers = system_parser.add_subparsers(dest='system_action', help='Acciones del sistema')
+    
+    # system status
+    system_subparsers.add_parser('status', help='Mostrar estado del sistema Nova')
+    
+    # system logs
+    logs_parser = system_subparsers.add_parser('logs', help='Mostrar logs recientes')
+    logs_parser.add_argument('--lines', type=int, default=50, help='Número de líneas a mostrar')
+    
+    # system cleanup
+    system_subparsers.add_parser('cleanup', help='Limpiar archivos temporales y caché')
+    
+    args = parser.parse_args()
+
+    # Sin argumentos → chat directamente (comportamiento por defecto)
+    if not args.command:
+        args.command = 'chat'
+
+    # Enrutar comandos
+    if args.command == 'chat':
+        from nova.cli.repl import run as repl_run
+        return repl_run()
+    elif args.command == 'skill':
+        return handle_skill_commands(args)
+    elif args.command == 'agent':
+        return handle_agent_commands(args)
+    elif args.command == 'config':
+        return handle_config_commands(args)
+    elif args.command == 'system':
+        return handle_system_commands(args)
+    else:
+        print(f"Comando desconocido: {args.command}")
+        return 1
+
+def handle_skill_commands(args):
+    """Manejar comandos de skills"""
+    if args.skill_action == 'list':
+        return cmd_skill_list()
+    elif args.skill_action == 'search':
+        return cmd_skill_search(args.query)
+    elif args.skill_action == 'install':
+        return cmd_skill_install(args.name, args.source)
+    elif args.skill_action == 'remove':
+        return cmd_skill_remove(args.name)
+    elif args.skill_action == 'update':
+        return cmd_skill_update()
+    elif args.skill_action == 'optimize':
+        return cmd_skill_optimize()
+    elif args.skill_action == 'info':
+        return cmd_skill_info(args.name)
+    else:
+        print(f"Acción de skill desconocida: {args.skill_action}")
+        return 1
+
+def handle_agent_commands(args):
+    """Manejar comandos de agents"""
+    if args.agent_action == 'list':
+        return cmd_agent_list()
+    elif args.agent_action == 'morning':
+        return cmd_agent_morning()
+    elif args.agent_action == 'research':
+        return cmd_agent_research(args.topic, args.depth)
+    elif args.agent_action == 'code':
+        return cmd_agent_code(args.task, args.language)
+    elif args.agent_action == 'orchestrator':
+        return cmd_agent_orchestrator(args.goal, args.max_turns)
+    elif args.agent_action == 'create':
+        return cmd_agent_create(args.name, args.type)
+    else:
+        print(f"Acción de agent desconocida: {args.agent_action}")
+        return 1
+
+def handle_config_commands(args):
+    """Manejar comandos de configuración"""
+    if args.config_action == 'show':
+        return cmd_config_show()
+    elif args.config_action == 'set':
+        return cmd_config_set(args.key, args.value)
+    else:
+        print(f"Acción de configuración desconocida: {args.config_action}")
+        return 1
+
+def handle_system_commands(args):
+    """Manejar comandos del sistema"""
+    if args.system_action == 'status':
+        return cmd_system_status()
+    elif args.system_action == 'logs':
+        return cmd_system_logs(args.lines)
+    elif args.system_action == 'cleanup':
+        return cmd_system_cleanup()
+    else:
+        print(f"Acción del sistema desconocida: {args.system_action}")
+        return 1
+
+# ========== IMPLEMENTACIÓN DE COMANDOS ==========
+
+def cmd_skill_list():
+    """Listar skills disponibles"""
+    try:
+        # Import the skills module
+        from nova.tools import nova_skills
+        import inspect
+        
+        # Get all functions that look like skills
+        skills = []
+        for name, obj in inspect.getmembers(nova_skills):
+            if inspect.isfunction(obj) and not name.startswith('_') and name not in ['dispatch', 'needs_web_search', 'maybe_clarify_command', 'capabilities_summary', '_dispatch_nova_enhanced', '_update_env', '_restart_nova', '_type_via_clipboard', '_resolve_user_path', '_parse_path_and_content', '_osascript', '_app_paths', '_OPEN_APP_ALIASES', '_MALE_VOICES', '_FEMALE_VOICES', '_DIAS', '_MESES', '_active_timers', '_notify_cb', '_router', '_HAS_DDG', '_HAS_N8N', '_HAS_GITHUB', '_HAS_BROWSER', '_HAS_NOVA_ENHANCED', '_INTENTS', '_REALTIME_KEYWORDS', '_drive_last_results']:
+                skills.append(name)
+        
+        print("🔧 Skills disponibles en Nova:")
+        for skill in sorted(skills):
+            print(f"  - {skill}")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al listar skills: {e}")
+        return 1
+
+def cmd_skill_search(query):
+    """Buscar skills en repositorios externos"""
+    try:
+        # Primero buscar en skills locales
+        from nova.tools import nova_skills
+        import inspect
+        
+        local_skills = []
+        for name, obj in inspect.getmembers(nova_skills):
+            if inspect.isfunction(obj) and not name.startswith('_') and name not in ['dispatch', 'needs_web_search', 'maybe_clarify_command', 'capabilities_summary', '_dispatch_nova_enhanced', '_update_env', '_restart_nova', '_type_via_clipboard', '_resolve_user_path', '_parse_path_and_content', '_osascript', '_app_paths', '_OPEN_APP_ALIASES', '_MALE_VOICES', '_FEMALE_VOICES', '_DIAS', '_MESES', '_active_timers', '_notify_cb', '_router', '_HAS_DDG', '_HAS_N8N', '_HAS_GITHUB', '_HAS_BROWSER', '_HAS_NOVA_ENHANCED', '_INTENTS', '_REALTIME_KEYWORDS', '_drive_last_results']:
+                local_skills.append(name)
+        
+        # Filtrar skills que coincidan con la consulta
+        matching_skills = [skill for skill in local_skills if query.lower() in skill.lower()]
+        
+        print(f"🔍 Buscando skills para: '{query}'")
+        if matching_skills:
+            print("  Skills locales encontrados:")
+            for skill in matching_skills:
+                print(f"    - {skill}")
+        else:
+            print("  No se encontraron skills locales coincidentes.")
+        
+        print("  (Nota: Búsqueda en repositorios externos pendiente de implementación)")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al buscar skills: {e}")
+        return 1
+
+def cmd_skill_install(name, source):
+    """Instalar un skill"""
+    try:
+        print(f"📦 Instalando skill '{name}' desde {source}")
+        print("  (Implementación pendiente - sistema de instalación de skills)")
+        print("  En una versión futura, esto:")
+        print("    1. Descargaría el skill desde el repositorio especificado")
+        print("    2. Verificaría dependencias y compatibilidad")
+        print("    3. Instalaría el skill en el directorio apropiado")
+        print("    4. Registraría el skill en el sistema de skills")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al instalar skill: {e}")
+        return 1
+
+def cmd_skill_remove(name):
+    """Remover un skill"""
+    try:
+        print(f"🗑️  Removiendo skill '{name}'")
+        print("  (Implementación pendiente)")
+        print("  En una versión futura, esto:")
+        print("    1. Verificaría si el skill está instalado")
+        print("    2. Eliminaría los archivos del skill")
+        print("    3. Actualizaría el registro de skills")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al remover skill: {e}")
+        return 1
+
+def cmd_skill_update():
+    """Actualizar todos los skills"""
+    try:
+        print("🔄 Actualizando todos los skills instalados")
+        print("  (Implementación pendiente)")
+        print("  En una versión futura, esto:")
+        print("    1. Verificaría versiones disponibles en repositorios")
+        print("    2. Descargaría e instalaría actualizaciones")
+        print("    3. Manejaría conflictos y dependencias")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al actualizar skills: {e}")
+        return 1
+
+def cmd_skill_optimize():
+    """Optimizar skills basado en uso"""
+    try:
+        print("⚡ Optimizando skills basado en datos de uso")
+        print("  (Implementación pendiente - sistema de aprendizaje y optimización)")
+        print("  En una versión futura, esto:")
+        print("    1. Analizaría patrones de uso de skills")
+        print("    2. Identificaría skills poco utilizados o problemáticos")
+        print("    3. Sugeriría mejoras o eliminaciones")
+        print("    4. Actualizaría métricas de rendimiento")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al optimizar skills: {e}")
+        return 1
+
+def cmd_skill_info(name):
+    """Mostrar información detallada de un skill"""
+    try:
+        # Import the skills module
+        from nova.tools import nova_skills
+        import inspect
+        
+        # Check if the skill exists
+        skill_func = getattr(nova_skills, name, None)
+        if not skill_func or not inspect.isfunction(skill_func):
+            print(f"❌ Skill '{name}' no encontrado.")
+            print("  Usa 'nova skill list' para ver los skills disponibles.")
+            return 1
+        
+        # Get skill information
+        print(f"ℹ️  Información del skill '{name}':")
+        
+        # Get function signature
+        sig = inspect.signature(skill_func)
+        params = list(sig.parameters.keys())
+        
+        if params:
+            print(f"  Parámetros: {', '.join(params)}")
+        else:
+            print("  Parámetros: Ninguno")
+        
+        # Get docstring - try multiple methods
+        doc = inspect.getdoc(skill_func)
+        if not doc:
+            # Try to get the source and extract docstring manually
+            try:
+                source = inspect.getsource(skill_func)
+                # Look for docstring in the source
+                lines = source.split('\n')
+                in_docstring = False
+                doc_lines = []
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith('"""') or stripped.startswith("'''"):
+                        if not in_docstring:
+                            in_docstring = True
+                            # Check if it's a one-line docstring
+                            if stripped.count('"""') == 2 or stripped.count("'''") == 2:
+                                doc_content = stripped[3:-3] if stripped.startswith('"""') else stripped[3:-3]
+                                if doc_content:
+                                    doc_lines.append(doc_content)
+                                break
+                        else:
+                            # End of docstring
+                            break
+                    elif in_docstring:
+                        doc_lines.append(line)
+                
+                if doc_lines:
+                    doc = '\n'.join(doc_lines).strip()
+            except:
+                pass
+        
+        if doc:
+            # Clean up docstring for display - take first meaningful line
+            doc_lines = [line.strip() for line in doc.split('\n') if line.strip()]
+            if doc_lines:
+                first_line = doc_lines[0]
+                print(f"  Descripción: {first_line}")
+            else:
+                print("  Descripción: Sin descripción disponible")
+        else:
+            print("  Descripción: Sin documentación disponible")
+            
+        return 0
+    except Exception as e:
+        print(f"❌ Error al obtener información del skill: {e}")
+        return 1
+
+def cmd_agent_list():
+    """Listar agents disponibles"""
+    try:
+        print("🤖 Agents disponibles en Nova:")
+        print("  - morning: Agente de briefing matutino")
+        print("  - research: Agente de investigación profunda")
+        print("  - code: Agente especializado en programación")
+        print("  - orchestrator: Agente de razonamiento multi-turno")
+        print("\n  (Los agents especializados están en desarrollo)")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al listar agents: {e}")
+        return 1
+
+def cmd_agent_morning():
+    """Ejecutar agente de briefing matutino"""
+    try:
+        print("🌅 Ejecutando agente Morning Digest...")
+        # Import and run the actual morning digest agent
+        from nova.agents.morning_digest import morning_digest
+        result = morning_digest()
+        print(result)
+        return 0
+    except Exception as e:
+        print(f"❌ Error al ejecutar agente de briefing matutino: {e}")
+        print("  (Verifique que los componentes necesarios estén disponibles)")
+        return 1
+
+def cmd_agent_research(topic, depth):
+    """Ejecutar agente de investigación"""
+    try:
+        print(f"🔍 Ejecutando agente de investigación sobre: '{topic}'")
+        print(f"  Profundidad: {depth}")
+        print("  (Implementación pendiente - agente de investigación)")
+        print("  En una versión futura, este agente:")
+        print("    1. Recopilaría información de múltiples fuentes")
+        print("    2. Analizaría y sintetizaría los hallazgos")
+        print("    3. Generaría un informe estructurado")
+        print("    4. Presentaría los resultados en formato legible")
+        return 0
+    except Exception as e:
+        print(f"❌ Error al ejecutar agente de investigación: {e}")
+        return 1
+
+def cmd_agent_code(task, language):
+    """Ejecutar agente especializado en código"""
+    try:
+        print(f"💻 Ejecutando agente de código para: '{task}'")
+        if language:
+            print(f"  Lenguaje: {language}")
+        
+        # Import and run the actual code assistant agent
+        from nova.agents.code_assistant import explain_code, improve_code, debug_code, generate_code_from_desc, search_code_docs
+        
+        # Por defecto, ejecutamos explicación de código
+        result = explain_code(task)
+        print(result)
+        return 0
+    except Exception as e:
+        print(f"❌ Error al ejecutar agente de código: {e}")
+        print("  (Verifique que los componentes necesarios estén disponibles)")
+        return 1
+
+def cmd_agent_orchestrator(goal, max_turns):
+    """Ejecutar agente orquestador"""
+    try:
+        print(f"🎯 Ejecutando agente orquestador para lograr: '{goal}'")
+        print(f"  Máximo de turnos: {max_turns}")
+        
+        # Import and run the actual orchestrator agent
+        from nova.agents.orchestrator_agent import orchestrator_execute
+        result = orchestrator_execute(goal, max_turns)
+        print(result)
+        return 0
+    except Exception as e:
+        print(f"❌ Error al ejecutar agente orquestador: {e}")
+        print("  (Verifique que los componentes necesarios estén disponibles)")
+        return 1
+
+def cmd_agent_create(name, type):
+    """Crear un nuevo agent"""
+    print(f"✨ Creando nuevo agent '{name}' de tipo '{type}'")
+    print("  (Implementación pendiente - sistema de creación de agents)")
+    return 0
+
+def cmd_config_show():
+    """Mostrar configuración actual"""
+    print("⚙️  Configuración actual de Nova:")
+    print("  (Implementación pendiente - leer desde .env y archivos de config)")
+    return 0
+
+def cmd_config_set(key, value):
+    """Establecer valor de configuración"""
+    print(f"🔧 Estableciendo {key} = {value}")
+    print("  (Implementación pendiente - guardar en .env)")
+    return 0
+
+def cmd_system_status():
+    """Mostrar estado del sistema"""
+    print("📊 Estado del sistema Nova:")
+    print("  (Implementación pendiente - verificar componentes y servicios)")
+    return 0
+
+def cmd_system_logs(lines):
+    """Mostrar logs recientes"""
+    print(f"📋 Últimas {lines} líneas de logs:")
+    print("  (Implementación pendiente - leer desde archivos de log)")
+    return 0
+
+def cmd_system_cleanup():
+    """Limpiar archivos temporales"""
+    print("🧹 Limpiando archivos temporales y caché")
+    print("  (Implementación pendiente)")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

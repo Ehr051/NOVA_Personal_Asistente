@@ -1,0 +1,89 @@
+{
+  "ejemplos": [
+    {
+      "archivo": "engranaje_helicoidal_16T.py",
+      "titulo": "Engranaje helicoidal 16 dientes con rodamiento, perno y tornillo",
+      "tags": ["engranaje", "gear", "diente", "helicoidal", "mecanico", "rodamiento", "perno", "tornillo", "pieza", "industrial"],
+      "tecnicas": ["bmesh dientes parametricos", "perfil involuta", "materiales metalicos", "animacion rotacion", "agujero boolean"],
+      "aprobado": true
+    },
+    {
+      "archivo": "engranaje_recto.py",
+      "titulo": "Engranaje recto 20 dientes módulo 1 — perfil involuta matemáticamente correcto",
+      "tags": ["engranaje", "gear", "involuta", "spur gear", "mecanico", "parametrico", "fundicion"],
+      "tecnicas": ["involute_point matematico", "bridge_loops bore", "principled bsdf cast iron"],
+      "aprobado": true
+    },
+    {
+      "archivo": "tornillo_hexagonal_m6.py",
+      "titulo": "Tornillo hexagonal M6 x 25mm — cabeza hex, espiga cilíndrica, rosca helicoidal",
+      "tags": ["tornillo", "bolt", "hex", "m6", "rosca", "thread", "herraje", "ferreteria", "mecanico"],
+      "tecnicas": ["cabeza hex 6 lados", "rosca helix bmesh", "material acero inoxidable", "sin bpy.ops.transform"],
+      "aprobado": true
+    },
+    {
+      "archivo": "tuerca_hexagonal_m6.py",
+      "titulo": "Tuerca hexagonal M6 — prisma hex con agujero central y chaflanes 30°",
+      "tags": ["tuerca", "nut", "hex", "m6", "herraje", "ferreteria", "mecanico", "rosca"],
+      "tecnicas": ["bridge_loops para agujero central", "bevel chaflanes", "material acero"],
+      "aprobado": true
+    },
+    {
+      "archivo": "arandela_m6.py",
+      "titulo": "Arandela plana M6 — disco anular con agujero interior",
+      "tags": ["arandela", "washer", "m6", "herraje", "ferreteria", "mecanico", "disco"],
+      "tecnicas": ["cilindro con agujero bmesh", "bridge_loops anillo", "zinc plateado bsdf"],
+      "aprobado": true
+    },
+    {
+      "archivo": "tornillo_allen_m4.py",
+      "titulo": "Tornillo allen M4 x 16mm — cabeza socket, hueco hexagonal interior",
+      "tags": ["tornillo", "allen", "socket", "m4", "hex key", "herraje", "mecanico", "black oxide"],
+      "tecnicas": ["cabeza cilindrica con hueco hex", "material black oxide", "geometria precisa"],
+      "aprobado": true
+    },
+    {
+      "archivo": "resorte_compresion.py",
+      "titulo": "Resorte de compresión — hélice con espiras muertas en extremos",
+      "tags": ["resorte", "spring", "muelle", "helix", "espiral", "mecanico", "elastico"],
+      "tecnicas": ["helix path bmesh", "espiras muertas variable pitch", "tubo circular en hélice", "material spring steel"],
+      "aprobado": true
+    },
+    {
+      "archivo": "perfil_aluminio_2020.py",
+      "titulo": "Perfil aluminio 2020 T-slot — perfil extrusionado 20x20mm con ranuras T",
+      "tags": ["perfil", "aluminio", "2020", "t-slot", "extrusion", "cnc", "robotica", "estructura"],
+      "tecnicas": ["perfil 2D cerrado con ranuras T", "extrusion a lo largo de Z", "anodizado aluminio bsdf"],
+      "aprobado": true
+    },
+    {
+      "archivo": "soporte_motor_drone.py",
+      "titulo": "Brazo/soporte motor drone — placa carbono con agujeros M2 y ranura de alivio",
+      "tags": ["drone", "motor mount", "brazo", "arm", "carbon fiber", "m2", "mecanico", "aereo", "uav"],
+      "tecnicas": ["boolean difference agujeros bolt circle", "ranura ovalada alivio de peso", "shader carbon fiber checker", "estructura imprimible 3d"],
+      "aprobado": true
+    },
+    {
+      "archivo": "silla_nordica_madera_plastico.py",
+      "titulo": "Silla nórdica con estructura de madera y asiento/respaldo de plástico",
+      "tags": ["silla", "chair", "mueble", "nordico", "madera", "plastico", "mobiliario"],
+      "tecnicas": ["patas inclinadas", "travesanos horizontales", "materiales diferenciados", "bevel modifier"],
+      "aprobado": true
+    },
+    {
+      "archivo": "ironman_mk3_wip.py",
+      "titulo": "Iron Man MK3 helmet — faceplate animado con pivot/empty",
+      "tags": ["casco", "helmet", "ironman", "animacion", "pivot", "faceplate", "bisagra"],
+      "tecnicas": ["empty como pivot", "parent-child partes", "keyframes bezier", "boolean modifier"],
+      "aprobado": false,
+      "notas": "Mecanismo OK, geometria organica requiere sculpting"
+    },
+    {
+      "archivo": "laptop_apertura_animada.py",
+      "titulo": "Laptop animado — apertura/cierre con bisagra Empty pivot",
+      "tags": ["laptop", "animacion", "bisagra", "keyframe", "articulado"],
+      "tecnicas": ["empty como pivot bisagra", "parent-child lid", "matrix_parent_inverse", "keyframes bezier AUTO_CLAMPED", "sin bpy.ops.transform"],
+      "aprobado": true
+    }
+  ]
+}

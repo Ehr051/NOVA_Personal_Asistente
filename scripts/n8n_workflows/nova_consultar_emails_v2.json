@@ -1,0 +1,83 @@
+{
+  "name": "📧 Nova - Consultar Emails v2",
+  "nodes": [
+    {
+      "id": "wh",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "nova/emails",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "nova-emails-v2"
+    },
+    {
+      "id": "read_sheet",
+      "name": "Sheets: Leer Emails",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [240, 0],
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "1Ml2r2fh5Tq7Us5WOBejz7h32aMuDwTVqb5DwdbIY29M",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Emails",
+          "mode": "name"
+        },
+        "filtersUI": {},
+        "options": {
+          "returnFirstMatch": false
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "mtcZJ0QMcGs2ZZYo",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "id": "compile",
+      "name": "Code: Compilar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst emails = items\n  .map(i => i.json)\n  .filter(e => e && e.email_id)\n  .reverse()  // más recientes primero\n  .slice(0, 20);\n\nif (!emails.length) {\n  return [{ json: {\n    emails: [],\n    cantidad: 0,\n    urgentes: 0,\n    resumen: 'No hay emails registrados aún, Señor.'\n  }}];\n}\n\nconst urgentes = emails.filter(e => e.urgente === 'SI').length;\nconst sinLeer  = emails.filter(e => !e.leido || e.leido === 'NO').length;\n\nlet resumen;\nif (urgentes > 0) {\n  resumen = `Tenés ${emails.length} emails en el registro, ${urgentes} urgente${urgentes>1?'s':''}. Señor.`;\n} else if (sinLeer > 0) {\n  resumen = `Tenés ${sinLeer} email${sinLeer>1?'s':''} sin leer de ${emails.length} en el registro. Señor.`;\n} else {\n  resumen = `Registro con ${emails.length} email${emails.length>1?'s':''}. Señor.`;\n}\n\nreturn [{ json: { emails, cantidad: emails.length, urgentes, sinLeer, resumen } }];\n"
+      }
+    },
+    {
+      "id": "resp",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 0],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Sheets: Leer Emails", "type": "main", "index": 0 }]]
+    },
+    "Sheets: Leer Emails": {
+      "main": [[{ "node": "Code: Compilar", "type": "main", "index": 0 }]]
+    },
+    "Code: Compilar": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true
+}

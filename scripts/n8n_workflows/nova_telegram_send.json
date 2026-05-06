@@ -1,0 +1,60 @@
+{
+  "name": "📨 Nova - Telegram Send",
+  "nodes": [
+    {
+      "id": "wh_tg",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nova/telegram-send",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "nova-telegram-send-v1"
+    },
+    {
+      "id": "tg_send",
+      "name": "Telegram: Enviar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [240, 0],
+      "parameters": {
+        "chatId": "={{ $json.body?.chat_id || $json.chat_id || $getWorkflowStaticData('global').tg_chat_id || '' }}",
+        "text": "={{ $json.body?.mensaje || $json.mensaje || '(sin mensaje)' }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "3HzWqLFxeWik0Zio",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "resp",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [480, 0],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Telegram: Enviar", "type": "main", "index": 0 }]]
+    },
+    "Telegram: Enviar": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true
+}

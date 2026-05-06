@@ -1,0 +1,194 @@
+{
+  "name": "📧 Nova - Monitor Emails v2",
+  "nodes": [
+    {
+      "id": "sched",
+      "name": "Schedule: Cada 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-240, 0],
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 10 }] }
+      }
+    },
+    {
+      "id": "gmail_read",
+      "name": "Gmail: Leer No Leidos",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [0, 0],
+      "parameters": {
+        "operation": "getMany",
+        "returnAll": false,
+        "limit": 20,
+        "filters": { "labelIds": ["INBOX", "UNREAD"] },
+        "options": { "downloadAttachments": false }
+      },
+      "credentials": {
+        "gmailOAuth2": { "id": "K31rzLSx8cGCc8Ow", "name": "Gmail account" }
+      }
+    },
+    {
+      "id": "filter",
+      "name": "Code: Filtrar Nuevos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 0],
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nif (!sd.processed) sd.processed = {};\nconst items = $input.all();\nconst fresh = items.filter(i => {\n  if (!i || !i.json) return false;\n  const id = i.json.id || i.json.email_id || i.json.messageId;\n  return id && !sd.processed[id];\n});\nreturn fresh.length ? fresh : [];\n"
+      }
+    },
+    {
+      "id": "classify",
+      "name": "Code: Clasificar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 0],
+      "parameters": {
+        "jsCode": "const msg = $input.item.json;\nconst subject = (msg.subject || '').toLowerCase();\nconst from    = (msg.from || msg.From || '').toLowerCase();\nconst snippet = (msg.snippet || msg.body || '').substring(0, 300).toLowerCase();\nconst text    = subject + ' ' + from + ' ' + snippet;\n\nconst CATS = {\n  'factura/gasto': /factura|invoice|recibo|pago\\s|cobro|cargo\\s|compra|order\\s|pedido|enviado|entrega|mercadopago|paypal|uber\\s*eats|rappi|delivery/i,\n  'banco':        /banco|bank|bbva|santander|ita[uú]|galicia|hsbc|transferencia|movimiento|tarjeta|cr[eé]dito|d[eé]bito|cuenta|saldo/i,\n  'trabajo':      /trabajo|office|meet\\.|zoom\\.|teams\\.|reuni[oó]n|proyecto|cliente|presupuesto|contrato|cotizaci[oó]n/i,\n  'cita':         /turno|cita\\s|appointment|reserva|confirmaci[oó]n|reminder|recordatorio|doctor|m[eé]dico|dentista|odont/i,\n  'suscripcion':  /newsletter|unsubscribe|baja\\s|subscription|suscripci[oó]n|spotify|netflix|adobe|github|notion/i,\n  'alerta':       /alerta|alert|security|seguridad|verificaci[oó]n|c[oó]digo|otp\\s|acceso\\s|login\\s|suspicious|intento/i,\n  'personal':     /querido|estimado|hola\\s|saludos|familia|amigo|cumple|felicit/i,\n};\n\nlet categoria = 'otro';\nfor (const [cat, re] of Object.entries(CATS)) {\n  if (re.test(text)) { categoria = cat; break; }\n}\n\nconst urgente = ['banco','alerta','cita'].includes(categoria) ||\n                /urgente|urgent|importante|asap/i.test(text);\n\nconst accion = { 'factura/gasto':'gastos', 'cita':'agenda', 'suscripcion':'archivar' }[categoria] || 'ninguna';\n\nconst fecha = msg.date\n  ? new Date(msg.date).toISOString().split('T')[0]\n  : new Date().toISOString().split('T')[0];\n\nconst fromClean = (msg.from || msg.From || 'desconocido')\n  .replace(/<[^>]+>/g, '').trim().substring(0, 60);\n\nconst asunto = (msg.subject || '(sin asunto)').substring(0, 100);\nconst cuerpo = (msg.snippet || msg.text || '').substring(0, 400);\n\nreturn { json: {\n  email_id: msg.id,\n  fecha,\n  de: fromClean,\n  asunto,\n  categoria,\n  cuerpo_preview: cuerpo,\n  urgente: urgente ? 'SI' : 'NO',\n  accion_sugerida: accion,\n  estado: 'nuevo'\n}};\n"
+      }
+    },
+    {
+      "id": "llm_summary",
+      "name": "Ollama: Resumir Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:11434/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Authorization", "value": "Bearer ollama" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{ JSON.stringify({\n  model: 'llama3.2:3b',\n  messages: [{\n    role: 'user',\n    content: 'Resumí este email en UNA sola oración en español (máximo 15 palabras), sin asteriscos ni markdown:\\nDe: ' + $json.de + '\\nAsunto: ' + $json.asunto + '\\nContenido: ' + $json.cuerpo_preview\n  }],\n  max_tokens: 60,\n  temperature: 0.3,\n  stream: false\n}) }}",
+        "options": { "timeout": 15000 }
+      }
+    },
+    {
+      "id": "extract_summary",
+      "name": "Code: Extraer Resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 0],
+      "parameters": {
+        "jsCode": "const prev = $('Code: Clasificar').item.json;\nconst raw  = $input.item.json;\n\nlet resumen = prev.cuerpo_preview?.substring(0, 100) || '';\ntry {\n  const choice = raw.choices?.[0]?.message?.content || '';\n  if (choice.trim()) resumen = choice.trim().replace(/[*_`#]/g,'').substring(0, 120);\n} catch(e) {}\n\nreturn { json: {\n  email_id:        prev.email_id,\n  fecha:           prev.fecha,\n  de:              prev.de,\n  asunto:          prev.asunto,\n  categoria:       prev.categoria,\n  resumen,\n  urgente:         prev.urgente,\n  accion_sugerida: prev.accion_sugerida,\n  estado:          prev.estado,\n  leido:           'NO'\n}};\n"
+      }
+    },
+    {
+      "id": "sheets_save",
+      "name": "Sheets: Guardar Email",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1200, 0],
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1Ml2r2fh5Tq7Us5WOBejz7h32aMuDwTVqb5DwdbIY29M",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Emails",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "mtcZJ0QMcGs2ZZYo", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "id": "mark",
+      "name": "Code: Marcar Procesados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 0],
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nif (!sd.processed) sd.processed = {};\nconst items = $input.all();\nconst now = Date.now();\nfor (const i of items) {\n  const id = i.json.email_id || i.json.id;\n  if (id) sd.processed[id] = now;\n}\nconst entries = Object.entries(sd.processed);\nif (entries.length > 2000) {\n  entries.sort((a,b) => a[1]-b[1]);\n  sd.processed = Object.fromEntries(entries.slice(-2000));\n}\nreturn items;\n"
+      }
+    },
+    {
+      "id": "ifurgent",
+      "name": "IF: Urgente",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1680, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "urg1",
+              "leftValue": "={{ $json.urgente }}",
+              "rightValue": "SI",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "tg_notify",
+      "name": "Telegram: Notificar",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1920, -100],
+      "parameters": {
+        "chatId": "={{ $getWorkflowStaticData('global').tg_chat_id || '' }}",
+        "text": "={{ '📧 ' + ($json.urgente === 'SI' ? '🚨 *URGENTE* ' : '') + '*Email nuevo*\\n' + '👤 ' + $json.de + '\\n' + '📌 ' + $json.asunto + '\\n' + '🏷️ ' + $json.categoria + '\\n' + '💬 ' + $json.resumen + '\\n\\n' + '🆔 `' + $json.email_id + '`\\n' + 'Nova puede: _archivar / eliminar / importante / agenda / gastos_' }}",
+        "additionalFields": { "parse_mode": "Markdown" }
+      },
+      "credentials": {
+        "telegramApi": { "id": "3HzWqLFxeWik0Zio", "name": "Telegram account" }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: Cada 10 min": {
+      "main": [[{ "node": "Gmail: Leer No Leidos", "type": "main", "index": 0 }]]
+    },
+    "Gmail: Leer No Leidos": {
+      "main": [[{ "node": "Code: Filtrar Nuevos", "type": "main", "index": 0 }]]
+    },
+    "Code: Filtrar Nuevos": {
+      "main": [[{ "node": "Code: Clasificar", "type": "main", "index": 0 }]]
+    },
+    "Code: Clasificar": {
+      "main": [[{ "node": "Ollama: Resumir Email", "type": "main", "index": 0 }]]
+    },
+    "Ollama: Resumir Email": {
+      "main": [[{ "node": "Code: Extraer Resumen", "type": "main", "index": 0 }]]
+    },
+    "Code: Extraer Resumen": {
+      "main": [[{ "node": "Sheets: Guardar Email", "type": "main", "index": 0 }]]
+    },
+    "Sheets: Guardar Email": {
+      "main": [[{ "node": "Code: Marcar Procesados", "type": "main", "index": 0 }]]
+    },
+    "Code: Marcar Procesados": {
+      "main": [[{ "node": "IF: Urgente", "type": "main", "index": 0 }]]
+    },
+    "IF: Urgente": {
+      "main": [
+        [{ "node": "Telegram: Notificar", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": true
+}

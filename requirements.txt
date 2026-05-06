@@ -1,0 +1,11 @@
+openai>=1.0.0
+gtts
+edge-tts>=6.1.9
+pygame>=2.0.0
+SpeechRecognition
+PyAudio
+python-dotenv
+duckduckgo-search
+rumps
+PyQtWebEngine
+pyautogui
