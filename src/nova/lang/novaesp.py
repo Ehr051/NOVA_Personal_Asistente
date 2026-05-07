@@ -588,9 +588,17 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
         system += f"\n\n{facts}"
 
     # Búsqueda dinámica en el Cerebro (Obsidian vault) si es relevante
-    last_user = next(
+    _raw_last = next(
         (m["content"] for m in reversed(history) if m.get("role") == "user"), ""
     )
+    # Normalizar: si es multimodal (list), extraer solo el texto
+    if isinstance(_raw_last, list):
+        last_user = " ".join(
+            p.get("text", "") for p in _raw_last
+            if isinstance(p, dict) and p.get("type") == "text"
+        ).strip()
+    else:
+        last_user = _raw_last or ""
     vault_ctx = _vault_context_for(last_user) if last_user else ""
     if vault_ctx:
         system += f"\n\n{vault_ctx}"
@@ -728,22 +736,44 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
         if text.startswith("__HUD_IMG__:"):
             # Formato: __HUD_IMG__:filename:mime:b64data[::caption]
             try:
-                parts = text[len("__HUD_IMG__:"):].split(":", 3)
-                fname, mime, b64 = parts[0], parts[1], parts[2]
-                caption = parts[3].lstrip(":").strip() if len(parts) > 3 else "¿Qué ves en esta imagen?"
+                rest = text[len("__HUD_IMG__:"):]
+                # Separar fname, mime (máx 2 splits), luego el resto
+                header_parts = rest.split(":", 2)
+                if len(header_parts) < 3:
+                    raise ValueError(f"Formato inválido: {len(header_parts)} partes")
+                fname, mime, remainder = header_parts
+                # Separar b64 del caption opcional (separados por "::")
+                if "::" in remainder:
+                    b64, caption = remainder.split("::", 1)
+                    caption = caption.strip() or "¿Qué ves en esta imagen?"
+                else:
+                    b64 = remainder
+                    caption = "Describe detalladamente lo que ves en esta imagen."
                 hud.put_state(status="THINKING", user_text=f"[imagen: {fname}]")
                 data_url = f"data:{mime};base64,{b64}"
-                img_msg = {
+                # Construir mensajes directamente — NO pasar por _build_messages
+                # que stripea las imágenes para APIs text-only
+                msgs = [{"role": "system", "content": router.system_prompt}]
+                # Agregar historial reciente solo con texto (para contexto)
+                for m in history[-(MAX_HISTORY * 2):]:
+                    if m.get("role") == "system":
+                        continue
+                    c = m.get("content", "")
+                    if isinstance(c, list):
+                        c = " ".join(p.get("text","") for p in c if isinstance(p,dict) and p.get("type")=="text")
+                    msgs.append({"role": m["role"], "content": c or " "})
+                # Mensaje final con imagen
+                msgs.append({
                     "role": "user",
                     "content": [
                         {"type": "text",      "text": caption},
                         {"type": "image_url", "image_url": {"url": data_url}},
                     ]
-                }
-                history.append(img_msg)
-                msgs   = _build_messages(history, router.system_prompt)
+                })
                 result = router.route(msgs)
                 resp   = result.get("response", "")
+                # Guardar en history como texto (la imagen no se necesita en el historial)
+                history.append({"role": "user",      "content": f"[imagen: {fname}] {caption}"})
                 history.append({"role": "assistant", "content": resp})
                 if resp:
                     speak(resp[:300], hud)
@@ -754,6 +784,8 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                         provider=result.get("provider", ""),
                         budget_remaining_pct=result.get("budget_remaining_pct", 100.0),
                     )
+                else:
+                    speak("No pude analizar la imagen. Prueba con otro modelo.", hud)
             except Exception as e:
                 log.warning("[HUD] Error procesando imagen adjunta: %s", e)
                 speak("Tuve un problema procesando la imagen.", hud)

@@ -337,7 +337,13 @@ class NovaNeuroMemory:
             vs.client.upsert(collection_name=vs.collection_name, points=[point])
             log.debug("[Memoria] Turno '%s' guardado via upsert", role)
         except Exception as e:
-            log.warning("[Memoria] Error guardando turno: %s", e)
+            msg = str(e)
+            if "SQLite" in msg and "thread" in msg:
+                # mem0 abre SQLite en el hilo principal; deshabilitar para hilos background
+                log.debug("[Memoria] mem0 deshabilitado en hilo background (SQLite thread-unsafe) — _simple activo")
+                self.m = None
+            else:
+                log.warning("[Memoria] Error guardando turno: %s", e)
 
     def get_recent_turns(self, limit: int = 20) -> list[dict]:
         """Devuelve los últimos N turnos en formato Chat API."""
