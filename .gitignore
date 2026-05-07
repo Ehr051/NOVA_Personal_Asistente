@@ -45,8 +45,10 @@ build/
 dist/
 *.spec.bak
 
-# Pruebas locales - no incluir en repositorio principal
-tests/
+# Artefactos de test generados — no trackear
+tests/reports/
+tests/__pycache__/
+tests/model_stats.json
 
 # seguimiento de workflow locales - no incluir en repositorio principal
 */workflow.md

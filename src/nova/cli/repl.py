@@ -563,6 +563,15 @@ def cmd_modelo(arg: str) -> Optional[str]:
     return "No se pudo cambiar el orden de proveedores en este router."
 
 
+def cmd_telegram(_: str) -> Optional[str]:
+    """Muestra estado del servidor Telegram Receive."""
+    try:
+        from nova.connectors.nova_telegram_server import status
+        return status()
+    except ImportError:
+        return "Módulo nova_telegram_server no disponible."
+
+
 # Comandos principales en español + aliases en inglés
 SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     # ── Principales (español) ──────────────────────────────────────────────────
@@ -584,6 +593,7 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/restart":   (cmd_reiniciar,   "→ /reiniciar"),
     "/cerebro":   (cmd_cerebro,     "Buscar/listar en el vault Cerebro: /cerebro MAIRA"),
     "/reenroll":  (cmd_reenroll,    "Registrar perfil de voz (3 rondas guiadas, ~2 min)"),
+    "/telegram":  (cmd_telegram,    "Estado del servidor Telegram Receive"),
     # ── Aliases inglés (para compatibilidad) ──────────────────────────────────
     "/help":      (cmd_help,        "→ /ayuda"),
     "/exit":      (cmd_exit,        "→ /salir"),
@@ -807,6 +817,14 @@ def run() -> int:
     global _ENV_CTX
     _ENV_CTX = _get_env_context()
     _print_banner(_ENV_CTX)
+
+    # Arrancar servidor Telegram Receive en background
+    _lazy_init()
+    try:
+        from nova.connectors.nova_telegram_server import start as _tg_start
+        _tg_start(process_fn=_route_to_llm)
+    except Exception:
+        pass
 
     read = _make_reader()
 
