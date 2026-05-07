@@ -46,7 +46,7 @@ jobs:
       # ── Actualizar pip (forma correcta por plataforma) ────────────────────
       - name: Upgrade pip (Windows)
         if: runner.os == 'Windows'
-        run: python -m python -m pip install --upgrade pip
+        run: python -m pip install --upgrade pip
 
       - name: Upgrade pip (macOS/Linux)
         if: runner.os != 'Windows'
