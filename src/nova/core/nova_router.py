@@ -448,7 +448,7 @@ class NovaRouter:
         self.stats_tracker = ModelStatsTracker()
 
         # ── Ollama ────────────────────────────────────────────
-        self._ollama_base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434/v1").strip()
+        self._ollama_base = self._resolve_ollama_base()
         self._ollama_models = self._detect_ollama_models()
         if self._ollama_models:
             self._ollama_client = OpenAI(
@@ -768,6 +768,32 @@ class NovaRouter:
             self._or_client is not None,
             self._anthropic_client is not None,
         ])
+
+    def _resolve_ollama_base(self) -> str:
+        """
+        Auto-detecta la URL correcta de Ollama.
+        Versiones nuevas (>=0.1.24) tienen /v1 (OpenAI-compatible).
+        Versiones viejas solo tienen la API nativa en el puerto raíz.
+        Prueba /v1/models primero; si falla, usa la base sin /v1.
+        """
+        env_url = os.getenv("OLLAMA_BASE_URL", "").strip()
+        base_host = (env_url.rstrip("/").replace("/v1", "")
+                     if env_url else "http://127.0.0.1:11434")
+
+        # Probar endpoint OpenAI-compatible (/v1)
+        try:
+            url = f"{base_host}/v1/models"
+            with urllib.request.urlopen(
+                urllib.request.Request(url), timeout=2
+            ) as r:
+                if r.status == 200:
+                    return f"{base_host}/v1"
+        except Exception:
+            pass
+
+        # Fallback: Ollama sin /v1 — usamos la URL base directa
+        # El cliente OpenAI igual puede conectarse; Ollama nativo responde en /
+        return base_host
 
     def _detect_ollama_models(self) -> dict[int, list[str]]:
         """
