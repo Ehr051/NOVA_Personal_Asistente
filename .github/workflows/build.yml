@@ -76,6 +76,17 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller nova.spec --noconfirm
 
+      # ── Installer Windows con Inno Setup ─────────────────────────────────
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          choco install innosetup --yes --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          New-Item -ItemType Directory -Force -Path installer\installer_output
+          & $iscc installer\nova_setup.iss
+          Copy-Item installer\installer_output\*.exe Nova-Setup.exe
+
       # ── Empaquetar ────────────────────────────────────────────────────────
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -98,6 +109,7 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
+            Nova-Setup.exe
             Nova-Windows.zip
             Nova-macOS.zip
             Nova-Linux.tar.gz
@@ -126,16 +138,18 @@ jobs:
             ## Nova Personal Assistant ${{ github.ref_name }}
 
             ### Descarga según tu sistema operativo:
-            | Sistema | Archivo |
-            |---------|---------|
-            | Windows | `Nova-Windows.zip` |
-            | macOS   | `Nova-macOS.zip`   |
-            | Linux   | `Nova-Linux.tar.gz` |
+            | Sistema | Archivo | Descripción |
+            |---------|---------|-------------|
+            | Windows | `Nova-Setup.exe` | **Instalador** — crea acceso directo y comando `nova` |
+            | Windows (portable) | `Nova-Windows.zip` | Sin instalación, descomprimí y ejecutá |
+            | macOS   | `Nova-macOS.zip`   | Descomprimí y ejecutá |
+            | Linux   | `Nova-Linux.tar.gz` | Descomprimí y ejecutá |
 
-            ### Primera vez:
-            1. Descomprimí el archivo
-            2. Ejecutá `Nova.exe` (Windows) o `Nova` (macOS/Linux)
-            3. En la primera ejecución te va a pedir tus API keys
+            ### Primera vez (Windows):
+            1. Descargá `Nova-Setup.exe`
+            2. Ejecutalo y seguí el asistente
+            3. Nova se instala, crea acceso directo en el escritorio y agrega `nova` al PATH
+            4. En la primera ejecución te va a pedir tus API keys
           files: artifacts/**/*
           draft: false
           prerelease: false
