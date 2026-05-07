@@ -1,11 +1,52 @@
+# ─── Core LLM / API ───────────────────────────────────────────────────────────
 openai>=1.0.0
-gtts
-edge-tts>=6.1.9
-pygame>=2.0.0
-SpeechRecognition
-PyAudio
+groq>=0.4.0
+anthropic>=0.20.0
 python-dotenv
-duckduckgo-search
-rumps
+
+# ─── Audio / Voz ──────────────────────────────────────────────────────────────
+SpeechRecognition
+edge-tts>=6.1.9
+gtts
+pygame>=2.0.0
+# PyAudio  ← instalar manualmente si falla: pip install PyAudio
+#            Linux: sudo apt install portaudio19-dev && pip install PyAudio
+#            Windows: pip install PyAudio --only-binary :all:
+
+# ─── HUD / GUI ────────────────────────────────────────────────────────────────
+PyQt5
 PyQtWebEngine
 pyautogui
+Pillow
+
+# ─── Memoria / Vector ─────────────────────────────────────────────────────────
+mem0ai
+qdrant-client
+
+# ─── LSP semántico ────────────────────────────────────────────────────────────
+jedi>=0.19.0
+
+# ─── OCR y documentos ─────────────────────────────────────────────────────────
+markitdown>=0.1.0
+# pytesseract  ← opcional, para OCR de imágenes
+#               Linux/Mac: sudo apt/brew install tesseract-ocr && pip install pytesseract
+#               Windows: instalar Tesseract desde https://github.com/UB-Mannheim/tesseract
+
+# ─── Detección de idioma (modo políglota) ─────────────────────────────────────
+# langdetect  ← opcional, mejora la detección de idioma (reemplaza heurística interna)
+#               pip install langdetect
+
+# ─── Web / Búsqueda ───────────────────────────────────────────────────────────
+duckduckgo-search
+requests
+
+# ─── Utilidades ───────────────────────────────────────────────────────────────
+numpy
+
+# ─── macOS only ───────────────────────────────────────────────────────────────
+# rumps  ← menu bar macOS — se instala automáticamente en macOS via install.py
+
+# ─── Windows only ─────────────────────────────────────────────────────────────
+# pywin32     ← requiere post-install: python -m pywin32_postinstall -install
+# pycaw       ← control volumen Windows
+# sounddevice ← audio alternativo a PyAudio en Windows

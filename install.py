@@ -56,6 +56,17 @@ BASE_REQUIREMENTS = [
     "qdrant-client",
     "groq",
     "anthropic",
+    # LSP semántico
+    "jedi>=0.19.0",
+    # OCR y documentos (PDF/DOCX/XLSX → Markdown)
+    "markitdown>=0.1.0",
+]
+
+OPTIONAL_REQUIREMENTS = [
+    # Mejor detección de idioma (modo políglota)
+    "langdetect",
+    # OCR de imágenes (requiere Tesseract instalado a nivel sistema)
+    "pytesseract",
 ]
 
 # PyAudio requiere compilación — es opcional, sounddevice es el reemplazo sin compilación
@@ -92,13 +103,18 @@ PLATFORM_REQUIREMENTS = {
 # ─── Deps de sistema (no-pip) ────────────────────────────────────────────────
 
 SYSTEM_DEPS = {
-    "macos":   [],         # macOS ya tiene say, afplay, screencapture, osascript
+    "macos":   [
+        # tesseract para OCR de imágenes (opcional)
+        # ("tesseract", "brew install tesseract  # OCR imágenes (opcional)"),
+    ],
     "windows": [],         # PowerShell tiene todo lo necesario (SAPI, etc.)
     "linux":   [
-        ("espeak-ng", "sudo apt install espeak-ng  # TTS voz"),
-        ("mpg123",    "sudo apt install mpg123       # reproducción MP3"),
-        ("xclip",     "sudo apt install xclip         # portapapeles"),
-        ("scrot",     "sudo apt install scrot          # capturas de pantalla (alternativa: gnome-screenshot)"),
+        ("espeak-ng", "sudo apt install espeak-ng        # TTS voz"),
+        ("mpg123",    "sudo apt install mpg123            # reproducción MP3"),
+        ("xclip",     "sudo apt install xclip             # portapapeles"),
+        ("scrot",     "sudo apt install scrot             # capturas de pantalla"),
+        # tesseract para OCR de imágenes (opcional)
+        # ("tesseract", "sudo apt install tesseract-ocr tesseract-ocr-spa  # OCR"),
     ],
 }
 
@@ -339,6 +355,11 @@ def install_all() -> None:
         header("Dependencias opcionales de audio")
         info(f"Intentando instalar {len(opt_deps)} paquetes opcionales...")
         pip_install(opt_deps, optional=True)
+
+    # 2c. Dependencias opcionales generales (LSP mejorado, OCR, políglota)
+    header("Dependencias opcionales (mejoras)")
+    info(f"Intentando instalar {len(OPTIONAL_REQUIREMENTS)} paquetes opcionales...")
+    pip_install(OPTIONAL_REQUIREMENTS, optional=True)
 
     # 3. Deps de sistema
     check_system_deps()
