@@ -81,10 +81,16 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          choco install innosetup --yes --no-progress
-          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          # Inno Setup ya viene en el runner — buscar ISCC.exe
+          $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) {
+            choco install innosetup --yes --no-progress --ignore-package-exit-codes
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          }
+          Write-Host "Usando ISCC: $iscc"
           New-Item -ItemType Directory -Force -Path installer\installer_output
           & $iscc installer\nova_setup.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item installer\installer_output\*.exe Nova-Setup.exe
 
       # ── Empaquetar ────────────────────────────────────────────────────────
