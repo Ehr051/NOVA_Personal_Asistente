@@ -150,18 +150,63 @@ def create_desktop_launcher() -> None:
         return
 
     if PLATFORM == "macos":
-        script = os.path.join(base, "launch_nova.sh")
-        if not os.path.exists(script):
-            return
-        # Crear un .command doble-clicable en el escritorio
-        launcher = os.path.join(desktop, "Nova.command")
+        app = os.path.join(desktop, "Nova.app")
         try:
-            with open(launcher, "w") as f:
-                f.write(f'#!/bin/bash\ncd "{base}"\nbash launch_nova.sh\n')
-            os.chmod(launcher, 0o755)
-            ok(f"Lanzador creado: {launcher}")
+            os.makedirs(os.path.join(app, "Contents", "MacOS"), exist_ok=True)
+            os.makedirs(os.path.join(app, "Contents", "Resources"), exist_ok=True)
+
+            # Ejecutable principal
+            exe = os.path.join(app, "Contents", "MacOS", "Nova")
+            with open(exe, "w") as f:
+                f.write(
+                    f'#!/bin/bash\n'
+                    f'cd "{base}"\n'
+                    f'export PATH="$HOME/.pyenv/versions/3.10.6/bin:$PATH"\n'
+                    f'export PYTHONPATH="{base}:{base}/src"\n'
+                    f'open -a Terminal "{base}/launch_nova.sh"\n'
+                )
+            os.chmod(exe, 0o755)
+
+            # Info.plist
+            with open(os.path.join(app, "Contents", "Info.plist"), "w") as f:
+                f.write(
+                    '<?xml version="1.0" encoding="UTF-8"?>\n'
+                    '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"'
+                    ' "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                    '<plist version="1.0"><dict>\n'
+                    '  <key>CFBundleExecutable</key><string>Nova</string>\n'
+                    '  <key>CFBundleIdentifier</key><string>com.ehr051.nova</string>\n'
+                    '  <key>CFBundleName</key><string>Nova</string>\n'
+                    '  <key>CFBundleDisplayName</key><string>Nova</string>\n'
+                    '  <key>CFBundleVersion</key><string>3.1</string>\n'
+                    '  <key>CFBundleIconFile</key><string>nova</string>\n'
+                    '  <key>CFBundlePackageType</key><string>APPL</string>\n'
+                    '</dict></plist>\n'
+                )
+
+            # Ícono .icns (generado desde assets/nova.png si existe iconutil)
+            png = os.path.join(base, "assets", "nova.png")
+            if os.path.exists(png) and shutil.which("iconutil"):
+                try:
+                    import tempfile
+                    from PIL import Image
+                    iconset = tempfile.mkdtemp(suffix=".iconset")
+                    img = Image.open(png).convert("RGBA")
+                    for s in [16, 32, 64, 128, 256, 512]:
+                        img.resize((s, s), Image.LANCZOS).save(
+                            os.path.join(iconset, f"icon_{s}x{s}.png"))
+                        img.resize((s*2, s*2), Image.LANCZOS).save(
+                            os.path.join(iconset, f"icon_{s}x{s}@2x.png"))
+                    icns = os.path.join(app, "Contents", "Resources", "nova.icns")
+                    subprocess.run(["iconutil", "-c", "icns", iconset, "-o", icns],
+                                   capture_output=True)
+                    shutil.rmtree(iconset, ignore_errors=True)
+                except Exception:
+                    pass  # sin ícono personalizado — Finder usa el genérico
+
+            ok(f"Lanzador creado: {app}")
         except Exception as e:
-            warn(f"No se pudo crear lanzador en escritorio: {e}")
+            warn(f"No se pudo crear Nova.app en escritorio: {e}")
 
     elif PLATFORM == "windows":
         # Crear un .bat en el escritorio
