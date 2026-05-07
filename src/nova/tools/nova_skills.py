@@ -2098,6 +2098,8 @@ try:
         _DOC_SEARCH_RE as _SPEC_DOC_RE,
         _CODE_KEYWORDS as _SPEC_CODE_KW,
         generar_tests as _generar_tests,
+        dockerizar as _dockerizar,
+        deploy_local as _deploy_local,
     )
     _HAS_SPECIALIST = True
 except ImportError:
@@ -2411,6 +2413,48 @@ def skill_generar_tests(texto: str) -> str:
     code = target.read_text(encoding="utf-8", errors="replace")
     result = _generar_tests(code, target, base, run=True)
     return f"Tests para {target.relative_to(base)}:\n{result}"
+
+
+def skill_dockerizar(texto: str) -> str:
+    """
+    Genera Dockerfile + docker-compose.yml para el proyecto activo.
+    Detecta el stack automáticamente (Python, Node, Go, etc.).
+    Ej: 'dockeriza este proyecto'
+    Ej: 'genera el dockerfile del proyecto'
+    """
+    if not _HAS_SPECIALIST:
+        return "Módulo de especialistas no disponible."
+
+    # Resolver directorio objetivo
+    m = re.search(r"(~/|/|\./)[\w./\- ]+", texto)
+    if m:
+        base_str = m.group(0).strip()
+    elif _proyecto_activo:
+        base_str = str(_proyecto_activo["path"])
+    else:
+        return "No hay proyecto activo. Usa 'abre proyecto [ruta]' primero o indica la ruta."
+
+    return _dockerizar(base_str)
+
+
+def skill_deploy_local(texto: str) -> str:
+    """
+    Levanta el proyecto en un contenedor local usando docker-compose.
+    Ej: 'levanta el proyecto en docker'
+    Ej: 'deploy local del proyecto'
+    """
+    if not _HAS_SPECIALIST:
+        return "Módulo de especialistas no disponible."
+
+    m = re.search(r"(~/|/|\./)[\w./\- ]+", texto)
+    if m:
+        base_str = m.group(0).strip()
+    elif _proyecto_activo:
+        base_str = str(_proyecto_activo["path"])
+    else:
+        return "No hay proyecto activo. Usa 'abre proyecto [ruta]' primero."
+
+    return _deploy_local(base_str)
 
 
 def skill_codear_con_docs(texto: str) -> str:
@@ -3525,6 +3569,16 @@ _INTENTS: list[tuple] = [
                                                                               skill_generar_tests, 0),
     (r"(?:testea(?:r)?|prueba(?:r)?)\s+(?:el\s+archivo\s+)?[\w./\-]+\.py",
                                                                               skill_generar_tests, 0),
+
+    # ── Docker awareness ─────────────────────────────────────────
+    (r"(?:dockeriza(?:r)?|genera(?:r)?\s+(?:el\s+)?dockerfile|crea(?:r)?\s+(?:el\s+)?dockerfile|"
+     r"agrega(?:r)?\s+docker|configura(?:r)?\s+docker)\s*.{0,100}",          skill_dockerizar, 0),
+    (r"(?:lev[aá]nta(?:r)?|sube(?:r)?|lanza(?:r)?|corre(?:r)?|deploy(?:ar)?|despliega(?:r)?)\s+"
+     r"(?:el\s+)?(?:proyecto|app|aplicaci[oó]n)\s+(?:en\s+)?(?:docker|contenedor|container).{0,60}",
+                                                                              skill_deploy_local, 0),
+    (r"(?:deploy\s+local|docker.compose\s+up|levanta\s+(?:el\s+)?docker).{0,60}",
+                                                                              skill_deploy_local, 0),
+
     (r"(?:qué\s+misiones|que\s+misiones|cómo\s+mejorar[ías]*|como\s+mejorar[ías]*|"
      r"propone[s]?\s+misiones?|planea[r]?\s+misiones?|analiza[r]?\s+proyecto|"
      r"misiones?\s+para|mejoras?\s+para|qué\s+har[ías]*|que\s+har[ías]*).{0,120}",
@@ -4269,6 +4323,10 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_codear_con_docs, "text"),
     "generar_tests":    ("Generar tests pytest para un archivo del proyecto activo y ejecutarlos",
                         skill_generar_tests, "text"),
+    "dockerizar":       ("Generar Dockerfile + docker-compose.yml para el proyecto activo",
+                        skill_dockerizar, "text"),
+    "deploy_local":     ("Levantar el proyecto activo en un contenedor Docker local",
+                        skill_deploy_local, "text"),
     "planear_misiones": ("Analizar el proyecto y proponer misiones de mejora con agentes especializados",
                         skill_planear_misiones, "text"),
     "ejecutar_misiones": ("Ejecutar las misiones propuestas (todas o seleccionadas por número)",

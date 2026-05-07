@@ -521,6 +521,184 @@ def generar_tests(code: str, source_path: Path, base_dir: Path,
     return result_str
 
 
+# ── Docker awareness ─────────────────────────────────────────────────────────
+
+_STACK_PATTERNS = {
+    "python":     (r"requirements\.txt|setup\.py|pyproject\.toml|\.py$", "python:3.11-slim"),
+    "node":       (r"package\.json|yarn\.lock|\.js$|\.ts$",              "node:20-alpine"),
+    "go":         (r"go\.mod|go\.sum|\.go$",                              "golang:1.22-alpine"),
+    "rust":       (r"Cargo\.toml|Cargo\.lock|\.rs$",                      "rust:1.77-slim"),
+    "java":       (r"pom\.xml|build\.gradle|\.java$",                     "eclipse-temurin:21-jre"),
+    "ruby":       (r"Gemfile|\.rb$",                                       "ruby:3.3-slim"),
+    "php":        (r"composer\.json|\.php$",                               "php:8.3-apache"),
+}
+
+
+def _detect_stack(base_dir: Path) -> tuple[str, str]:
+    """
+    Detecta el stack tecnológico analizando los archivos del proyecto.
+    Retorna (stack_name, base_image).
+    """
+    files = [f.name for f in base_dir.rglob("*") if f.is_file() and ".git" not in str(f)]
+    file_str = "\n".join(files)
+    for stack, (pattern, image) in _STACK_PATTERNS.items():
+        if re.search(pattern, file_str, re.IGNORECASE):
+            return stack, image
+    return "generic", "ubuntu:24.04"
+
+
+def _find_entry_point(base_dir: Path, stack: str) -> str:
+    """Detecta el punto de entrada del proyecto."""
+    candidates = {
+        "python": ["main.py", "app.py", "run.py", "server.py", "src/main.py", "src/app.py"],
+        "node":   ["index.js", "server.js", "app.js", "src/index.js"],
+        "go":     ["main.go", "cmd/main.go"],
+    }
+    for candidate in candidates.get(stack, []):
+        if (base_dir / candidate).exists():
+            return candidate
+    return ""
+
+
+def dockerizar(base_dir_str: str) -> str:
+    """
+    Genera Dockerfile + docker-compose.yml para un proyecto existente.
+    Detecta el stack automáticamente y usa el agente DevOps para generar
+    la configuración óptima.
+    Retorna resumen de lo generado.
+    """
+    base_dir = Path(base_dir_str).expanduser().resolve()
+    if not base_dir.exists():
+        return f"El directorio no existe: {base_dir}"
+
+    # No sobreescribir si ya existe
+    df_path  = base_dir / "Dockerfile"
+    dc_path  = base_dir / "docker-compose.yml"
+    existing = []
+    if df_path.exists():  existing.append("Dockerfile")
+    if dc_path.exists():  existing.append("docker-compose.yml")
+    if existing:
+        return (f"Ya existe: {', '.join(existing)} en {base_dir.name}. "
+                f"Bórralo primero si querés regenerarlo.")
+
+    stack, base_image = _detect_stack(base_dir)
+    entry = _find_entry_point(base_dir, stack)
+
+    # Listar archivos relevantes para el agente
+    relevant = [f.relative_to(base_dir) for f in base_dir.rglob("*")
+                if f.is_file() and ".git" not in str(f) and f.suffix in
+                (".py", ".js", ".ts", ".go", ".rs", ".java", ".rb", ".php",
+                 ".json", ".toml", ".yaml", ".yml", ".txt", ".mod")][:30]
+    file_list = "\n".join(f"  {f}" for f in relevant)
+
+    _load_agents()
+    agent = (find_agent("devops automator") or find_agent("devops")
+             or find_agent("backend architect"))
+    if not agent:
+        return "No encontré agente DevOps disponible."
+
+    prompt = (
+        f"Generate a production-ready Dockerfile and docker-compose.yml for this project.\n\n"
+        f"Project: {base_dir.name}\n"
+        f"Detected stack: {stack} (base image: {base_image})\n"
+        f"Entry point: {entry or 'unknown — infer from files'}\n\n"
+        f"Files in project:\n{file_list}\n\n"
+        f"Requirements:\n"
+        f"- Multi-stage build if beneficial\n"
+        f"- Non-root user\n"
+        f"- Health check\n"
+        f"- docker-compose.yml with service, port mapping, volume for data persistence\n"
+        f"- .dockerignore content as a comment at the top of the Dockerfile\n\n"
+        f"Output EXACTLY two files using this format:\n"
+        f"=== FILE: Dockerfile ===\n(content)\n=== END FILE ===\n"
+        f"=== FILE: docker-compose.yml ===\n(content)\n=== END FILE ==="
+    )
+
+    resp = _call_groq(agent["system"], prompt, model="llama-3.3-70b-versatile")
+    if not resp:
+        for m in _OR_TEXT_MODELS:
+            resp = _call_openrouter(agent["system"], prompt, model=m)
+            if resp: break
+
+    if not resp:
+        return "Sin conexión LLM para generar Docker config."
+
+    files = _parse_file_blocks(resp)
+    if not files:
+        # Fallback: intentar extraer bloques de código directos
+        dockerfile_match = re.search(
+            r"(?:# ?Dockerfile|dockerfile)\b.*?\n(FROM .+?)(?=\n=== |\Z)", resp,
+            re.IGNORECASE | re.DOTALL)
+        if not dockerfile_match:
+            raw_path = base_dir / "docker_output.md"
+            raw_path.write_text(resp, encoding="utf-8")
+            return f"No pude parsear archivos Docker — guardé respuesta en {raw_path.name}"
+
+    created = _write_project_files(files, base_dir)
+    return (
+        f"[DevOps] Docker config generada para {base_dir.name} ({stack})\n"
+        f"Archivos: {', '.join(created)}\n"
+        f"Para correr: docker-compose up -d"
+    )
+
+
+def deploy_local(base_dir_str: str) -> str:
+    """
+    Levanta el proyecto en un contenedor local via docker-compose.
+    Retorna estado de los contenedores.
+    """
+    import subprocess
+    base_dir = Path(base_dir_str).expanduser().resolve()
+
+    dc_path = base_dir / "docker-compose.yml"
+    df_path = base_dir / "Dockerfile"
+
+    if not dc_path.exists() and not df_path.exists():
+        return (f"No hay docker-compose.yml ni Dockerfile en {base_dir.name}. "
+                f"Ejecutá 'dockeriza este proyecto' primero.")
+
+    cmd_base = ["docker-compose"] if dc_path.exists() else ["docker", "build", "-t",
+                                                              base_dir.name.lower(), "."]
+    try:
+        if dc_path.exists():
+            # Build + up
+            build = subprocess.run(
+                ["docker-compose", "build"], cwd=base_dir,
+                capture_output=True, text=True, timeout=300
+            )
+            if build.returncode != 0:
+                return f"✗ docker-compose build falló:\n{(build.stderr or build.stdout)[-600:]}"
+
+            up = subprocess.run(
+                ["docker-compose", "up", "-d"], cwd=base_dir,
+                capture_output=True, text=True, timeout=60
+            )
+            if up.returncode != 0:
+                return f"✗ docker-compose up falló:\n{(up.stderr or up.stdout)[-600:]}"
+
+            # Estado de contenedores
+            ps = subprocess.run(
+                ["docker-compose", "ps"], cwd=base_dir,
+                capture_output=True, text=True, timeout=15
+            )
+            return (f"✓ Proyecto {base_dir.name} levantado\n"
+                    f"{ps.stdout.strip() or 'docker-compose ps sin salida'}\n"
+                    f"Logs: docker-compose logs -f")
+        else:
+            build = subprocess.run(cmd_base, cwd=base_dir,
+                                   capture_output=True, text=True, timeout=300)
+            if build.returncode != 0:
+                return f"✗ docker build falló:\n{(build.stderr or build.stdout)[-600:]}"
+            return f"✓ Imagen {base_dir.name.lower()} construida. Correla con docker run."
+
+    except FileNotFoundError:
+        return "Docker no está instalado o no está en PATH."
+    except subprocess.TimeoutExpired:
+        return "⚠ Timeout: docker tardó demasiado (>5 min)."
+    except Exception as e:
+        return f"⚠ Error: {e}"
+
+
 def _color_diff(dest: Path, new_content: str) -> str:
     """
     Genera un diff unificado coloreado entre el contenido actual del archivo

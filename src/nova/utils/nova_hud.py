@@ -506,6 +506,7 @@ class NovaWindow(QWidget):
 
         # Estado de modelos / sesión
         self._session_tokens  = 0
+        self._last_tokens     = 0
         self._last_model      = "—"
         self._last_provider   = "—"
         self._last_budget_pct = 100.0
@@ -548,9 +549,19 @@ class NovaWindow(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
+        self._install_view_filter()
+        # Retry after Chromium initializes (focusProxy may be None initially)
+        QTimer.singleShot(600,  self._install_view_filter)
+        QTimer.singleShot(2000, self._install_view_filter)
+
+    def _install_view_filter(self):
+        from PyQt5.QtWidgets import QWidget
         fp = self._view.focusProxy()
         if fp:
             fp.installEventFilter(self)
+        # Install on all internal Chromium child widgets
+        for child in self._view.findChildren(QWidget):
+            child.installEventFilter(self)
 
     # ── Tira toggle (▾/▴) ────────────────────────────────────────────────────
 
@@ -580,13 +591,14 @@ class NovaWindow(QWidget):
                         model: str = ""):
         """Actualiza la barra de métricas con datos del último LLM call."""
         if tokens:
+            self._last_tokens     = tokens
             self._session_tokens += tokens
             self._call_count     += 1
         if provider:
             self._last_provider = provider[:14]
         if budget_pct >= 0:
             self._last_budget_pct = budget_pct
-        if model:
+        if model and model != "[SKILL LOCAL]":
             # Acortar: "llama-3.3-70b-versatile" → "llama3.3-70b"
             m = model.replace("llama-", "llama").replace("-versatile", "").replace("-instant", "ᵢ")
             m = m.replace("-preview", "ₚ").replace(":free", "").replace("google/", "")
@@ -594,13 +606,13 @@ class NovaWindow(QWidget):
 
         budget_icon = "●" if self._last_budget_pct > 30 else "▲" if self._last_budget_pct > 10 else "▼"
         line1 = f"▸ {self._last_model:<18}  {self._last_provider}"
-        line2 = (f"  tk última: {tokens:,}  sesión: {self._session_tokens:,}  "
+        line2 = (f"  tk última: {self._last_tokens:,}  sesión: {self._session_tokens:,}  "
                  f"{budget_icon}{self._last_budget_pct:.0f}%  [{self._call_count} calls]")
         self._metrics_bar.setText(f"{line1}\n{line2}")
         self._metrics_bar.setToolTip(
-            f"Modelo: {model or self._last_model}\n"
+            f"Modelo: {self._last_model}\n"
             f"Proveedor: {self._last_provider}\n"
-            f"Tokens esta llamada: {tokens:,}\n"
+            f"Tokens esta llamada: {self._last_tokens:,}\n"
             f"Total sesión: {self._session_tokens:,}\n"
             f"Llamadas: {self._call_count}\n"
             f"Budget restante: {self._last_budget_pct:.1f}%"
@@ -947,6 +959,12 @@ class NovaWindow(QWidget):
             return False
 
         return super().eventFilter(obj, event)
+
+    def wheelEvent(self, event):
+        """Scroll sobre cualquier parte del HUD → escala la ventana."""
+        delta = event.angleDelta().y()
+        self._apply_scale(1 if delta > 0 else -1)
+        event.accept()
 
     # ── WebEngine ─────────────────────────────────────────────────────────────
 
