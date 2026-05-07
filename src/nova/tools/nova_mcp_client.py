@@ -1,7 +1,10 @@
+import logging
 import os
 import json
 import urllib.request
 import urllib.error
+
+log = logging.getLogger(__name__)
 
 class NovaMCPClient:
     """
@@ -19,7 +22,7 @@ class NovaMCPClient:
         Llama a una herramienta específica provista por el ecosistema Hermes/OpenClaw.
         Ej: tool_name="create_calendar_event", parameters={"time": "tomorrow..."}
         """
-        print(f"[NovaMCP] Ejecutando tool '{tool_name}' con MCP...")
+        log.info("[MCP] Ejecutando tool '%s'", tool_name)
         try:
             payload = json.dumps({
                 "tool": tool_name,
@@ -38,14 +41,14 @@ class NovaMCPClient:
 
             with urllib.request.urlopen(req, timeout=15) as response:
                 data = json.loads(response.read().decode('utf-8'))
-                print(f"[NovaMCP] ✓ Tool '{tool_name}' ejecutada con éxito.")
+                log.info("[MCP] Tool '%s' ejecutada OK", tool_name)
                 return {"status": "success", "result": data}
                 
         except urllib.error.URLError as e:
-            print(f"[NovaMCP] ⚠️ Error de red MCP: {e}")
+            log.warning("[MCP] Error de red: %s", e)
             return {"status": "error", "message": str(e)}
         except Exception as e:
-            print(f"[NovaMCP] ⚠️ Error ejecutando MCP: {e}")
+            log.warning("[MCP] Error ejecutando tool: %s", e)
             return {"status": "error", "message": f"Fallo en la tool: {str(e)}"}
 
     def get_available_tools(self) -> list:
@@ -67,4 +70,4 @@ class NovaMCPClient:
 
 if __name__ == "__main__":
     mcp = NovaMCPClient()
-    print("Herramientas disponibles en MCP Gateway:", mcp.get_available_tools())
+    log.info("[MCP] Herramientas disponibles: %s", mcp.get_available_tools())

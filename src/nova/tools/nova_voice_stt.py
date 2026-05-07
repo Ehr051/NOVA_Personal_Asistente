@@ -1,4 +1,5 @@
 import os
+import logging
 # Fix: evita el crash de OpenMP en macOS.
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -8,6 +9,8 @@ import tempfile
 import numpy as np
 import librosa
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from faster_whisper import WhisperModel
 import speech_recognition as sr
@@ -49,7 +52,7 @@ def _extract_features(wav_path: str) -> np.ndarray | None:
         norm   = np.linalg.norm(feats)
         return feats / norm if norm > 0 else feats
     except Exception as e:
-        print(f"[Nova STT] Error extrayendo features: {e}")
+        log.warning("[STT] Error extrayendo features: %s", e)
         return None
 
 
@@ -76,7 +79,7 @@ class NovaVoiceSTT:
         - Sin perfil: acepta cualquier voz (modo abierto).
         - Ejecutar con --enroll para crear/actualizar el perfil.
         """
-        print("[Nova STT] Cargando modelo Whisper (esto puede tomar unos segundos)...")
+        log.info("[STT] Cargando modelo Whisper...")
         self.model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
         self.recognizer = sr.Recognizer()
@@ -89,12 +92,12 @@ class NovaVoiceSTT:
 
         if PROFILE_PATH.exists():
             self.voice_profile = np.load(str(PROFILE_PATH))
-            print(f"[Nova STT] ✅ Perfil de voz cargado → verificación ACTIVA (umbral={self.threshold})")
+            log.info("[STT] Perfil cargado — verificación ACTIVA (umbral=%s)", self.threshold)
         else:
-            print("[Nova STT] ⚠️  Sin perfil de voz. Ejecutá con --enroll para registrarte.")
-            print("[Nova STT]    Hasta entonces, se aceptará cualquier voz.")
+            log.warning("[STT] Sin perfil de voz. Ejecutá --enroll para registrarte.")
+            log.warning("[STT] Sin perfil — se acepta cualquier voz.")
 
-        print("[Nova STT] Listo.\n")
+        log.info("[STT] Listo.")
 
     # ─────────────────────────────────────────
     #  Registro de voz

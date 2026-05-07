@@ -2105,6 +2105,23 @@ try:
 except ImportError:
     _HAS_SPECIALIST = False
 
+# ── LSP imports ───────────────────────────────────────────────────────────────
+try:
+    from nova.connectors.nova_lsp import (
+        find_definition        as _lsp_definition,
+        find_references        as _lsp_references,
+        get_signature          as _lsp_signature,
+        get_docstring          as _lsp_docstring,
+        get_completions        as _lsp_completions,
+        diagnose_file          as _lsp_diagnose,
+        analyze_file           as _lsp_analyze,
+        find_symbol_in_project as _lsp_find_symbol,
+        rename_symbol          as _lsp_rename,
+    )
+    _HAS_LSP = True
+except ImportError:
+    _HAS_LSP = False
+
 def skill_especialista(texto: str) -> str:
     """Invoca un agente especializado (firmware, arquitecto, IA, etc.) via Groq/OpenRouter.
     Si la respuesta contiene código Python o bash, lo ejecuta automáticamente.
@@ -2413,6 +2430,130 @@ def skill_generar_tests(texto: str) -> str:
     code = target.read_text(encoding="utf-8", errors="replace")
     result = _generar_tests(code, target, base, run=True)
     return f"Tests para {target.relative_to(base)}:\n{result}"
+
+
+def skill_lsp_definicion(texto: str) -> str:
+    """
+    Busca dónde está definida una función, clase o variable.
+    Ej: 'dónde está definida la función ejecutar_con_feedback'
+    Ej: 'definición de NovaHUD'
+    """
+    if not _HAS_LSP:
+        return "LSP no disponible. Instala jedi: pip install jedi"
+    m = re.search(r"(?:función|clase|variable|def|class)?\s+['\"]?(\w+)['\"]?", texto, re.IGNORECASE)
+    symbol = m.group(1) if m else texto.strip().split()[-1]
+    base = _proyecto_activo["path"] if _proyecto_activo else Path.cwd()
+    return _lsp_find_symbol(symbol, base)
+
+
+def skill_lsp_referencias(texto: str) -> str:
+    """
+    Busca dónde se usa un símbolo en el proyecto.
+    Ej: 'dónde se usa speak'
+    Ej: 'referencias a skill_git_commit'
+    """
+    if not _HAS_LSP:
+        return "LSP no disponible."
+    m = re.search(r"(?:usa[n]?|referencia[s]?|llam[a-z]+)\s+(?:a\s+)?['\"]?(\w+)['\"]?", texto, re.IGNORECASE)
+    if not m:
+        m = re.search(r"\b(\w+)\b\s*$", texto)
+    symbol = m.group(1) if m else texto.strip().split()[-1]
+    base = _proyecto_activo["path"] if _proyecto_activo else Path.cwd()
+    return _lsp_find_symbol(symbol, base)
+
+
+def skill_lsp_analizar(texto: str) -> str:
+    """
+    Analiza un archivo Python del proyecto: funciones, clases, imports, errores.
+    Ej: 'analiza nova_skills.py'
+    Ej: 'qué funciones tiene nova_specialist.py'
+    """
+    if not _HAS_LSP:
+        return "LSP no disponible."
+    m = re.search(r"([\w./\-]+\.py)", texto)
+    if not m:
+        return "Indicá el archivo Python a analizar. Ej: 'analiza nova_router.py'"
+    base = _proyecto_activo["path"] if _proyecto_activo else Path.cwd()
+    fname = m.group(1).strip()
+    candidates = [base / fname] + list(base.rglob(fname))
+    target = next((p for p in candidates if p.exists()), None)
+    if not target:
+        return f"No encontré '{fname}' en el proyecto."
+    result = _lsp_analyze(target, base)
+    if "error" in result:
+        return result["error"]
+    symbols = result.get("symbols", [])
+    imports = result.get("imports", [])
+    diag    = result.get("diagnostics", "")
+    lines = [f"**{result['file']}**"]
+    if symbols:
+        funcs   = [s["name"] if isinstance(s, dict) else s for s in symbols
+                   if not isinstance(s, dict) or s.get("type") == "function"]
+        classes = [s["name"] if isinstance(s, dict) else "" for s in symbols
+                   if isinstance(s, dict) and s.get("type") == "class"]
+        if classes:
+            lines.append(f"Clases ({len(classes)}): {', '.join(filter(None, classes))}")
+        if funcs:
+            lines.append(f"Funciones ({len(funcs)}): {', '.join(funcs[:15])}" +
+                         (f" y {len(funcs)-15} más" if len(funcs) > 15 else ""))
+    if imports:
+        lines.append(f"Imports: {', '.join(imports[:8])}")
+    lines.append(f"Diagnóstico: {diag}")
+    return "\n".join(lines)
+
+
+def skill_lsp_diagnostico(texto: str) -> str:
+    """
+    Diagnóstico de errores de sintaxis en un archivo Python.
+    Ej: 'hay errores en nova_router.py'
+    Ej: 'diagnostica el archivo main.py'
+    """
+    if not _HAS_LSP:
+        return "LSP no disponible."
+    m = re.search(r"([\w./\-]+\.py)", texto)
+    if not m:
+        return "Indicá el archivo a diagnosticar."
+    base = _proyecto_activo["path"] if _proyecto_activo else Path.cwd()
+    fname = m.group(1).strip()
+    candidates = [base / fname] + list(base.rglob(fname))
+    target = next((p for p in candidates if p.exists()), None)
+    if not target:
+        return f"No encontré '{fname}'."
+    source = target.read_text(encoding="utf-8", errors="replace")
+    return _lsp_diagnose(source, target, base)
+
+
+def skill_lsp_renombrar(texto: str) -> str:
+    """
+    Renombra un símbolo en un archivo Python de forma segura (todas las ocurrencias).
+    Ej: 'renombra función old_name a new_name en archivo.py'
+    Ej: 'renombra speak por hablar en novaesp.py'
+    """
+    if not _HAS_LSP:
+        return "LSP no disponible."
+    # Detectar: renombra X por/a Y en archivo.py
+    m = re.search(
+        r"renombr[a-z]+\s+(?:\w+\s+)?['\"]?(\w+)['\"]?\s+(?:por|a|as|→|->)\s+['\"]?(\w+)['\"]?"
+        r"(?:\s+en\s+([\w./\-]+\.py))?",
+        texto, re.IGNORECASE
+    )
+    if not m:
+        return ("Formato: 'renombra [función] X por Y en archivo.py'\n"
+                "Ej: 'renombra speak por hablar en novaesp.py'")
+    old_name, new_name, fname = m.group(1), m.group(2), m.group(3)
+    if not fname:
+        return f"Indicá el archivo donde renombrar '{old_name}' → '{new_name}'."
+    base = _proyecto_activo["path"] if _proyecto_activo else Path.cwd()
+    candidates = [base / fname] + list(base.rglob(fname))
+    target = next((p for p in candidates if p.exists()), None)
+    if not target:
+        return f"No encontré '{fname}'."
+    source = target.read_text(encoding="utf-8", errors="replace")
+    new_source, summary = _lsp_rename(old_name, new_name, target, source, base)
+    if new_source != source:
+        target.write_text(new_source, encoding="utf-8")
+        return f"✓ {summary}\nArchivo actualizado: {target.relative_to(base)}"
+    return f"Sin cambios. {summary}"
 
 
 def skill_dockerizar(texto: str) -> str:
@@ -3570,6 +3711,19 @@ _INTENTS: list[tuple] = [
     (r"(?:testea(?:r)?|prueba(?:r)?)\s+(?:el\s+archivo\s+)?[\w./\-]+\.py",
                                                                               skill_generar_tests, 0),
 
+    # ── LSP — análisis semántico de código ───────────────────────
+    (r"(?:dónde|donde)\s+(?:está|esta)\s+(?:definid[ao]|implement[ao]d[ao])\s+"
+     r"(?:la\s+función|la\s+clase|el\s+método|el\s+símbolo)?\s*['\"]?(\w+)['\"]?",
+                                                                              skill_lsp_definicion, 0),
+    (r"definición\s+de\s+['\"]?(\w+)['\"]?",                                 skill_lsp_definicion, 1),
+    (r"(?:dónde|donde)\s+se\s+usa\s+['\"]?(\w+)['\"]?",                      skill_lsp_referencias, 1),
+    (r"referencias?\s+(?:a|de)\s+['\"]?(\w+)['\"]?",                         skill_lsp_referencias, 1),
+    (r"(?:analiza(?:r)?|que\s+funciones?\s+tiene|estructura\s+de)\s+([\w./\-]+\.py)",
+                                                                              skill_lsp_analizar, 0),
+    (r"(?:hay\s+errores?\s+en|diagnostica(?:r)?|revisa\s+errores?\s+en)\s+([\w./\-]+\.py)",
+                                                                              skill_lsp_diagnostico, 0),
+    (r"(?:renombra(?:r)?|cambia(?:r)?\s+nombre)\s+.{5,}",                    skill_lsp_renombrar, 0),
+
     # ── Docker awareness ─────────────────────────────────────────
     (r"(?:dockeriza(?:r)?|genera(?:r)?\s+(?:el\s+)?dockerfile|crea(?:r)?\s+(?:el\s+)?dockerfile|"
      r"agrega(?:r)?\s+docker|configura(?:r)?\s+docker)\s*.{0,100}",          skill_dockerizar, 0),
@@ -4323,6 +4477,16 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_codear_con_docs, "text"),
     "generar_tests":    ("Generar tests pytest para un archivo del proyecto activo y ejecutarlos",
                         skill_generar_tests, "text"),
+    "lsp_definicion":   ("Buscar dónde está definida una función, clase o símbolo en el proyecto",
+                        skill_lsp_definicion, "text"),
+    "lsp_referencias":  ("Buscar dónde se usa un símbolo en el proyecto activo",
+                        skill_lsp_referencias, "text"),
+    "lsp_analizar":     ("Analizar un archivo Python: funciones, clases, imports y errores",
+                        skill_lsp_analizar, "text"),
+    "lsp_diagnostico":  ("Diagnosticar errores de sintaxis en un archivo Python",
+                        skill_lsp_diagnostico, "text"),
+    "lsp_renombrar":    ("Renombrar un símbolo en todo un archivo de forma segura",
+                        skill_lsp_renombrar, "text"),
     "dockerizar":       ("Generar Dockerfile + docker-compose.yml para el proyecto activo",
                         skill_dockerizar, "text"),
     "deploy_local":     ("Levantar el proyecto activo en un contenedor Docker local",

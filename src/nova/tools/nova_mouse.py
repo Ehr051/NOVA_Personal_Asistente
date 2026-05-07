@@ -1,8 +1,11 @@
+import logging
 import time
 import pyautogui
 import math
 import platform
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 class NovaComputerPilot:
     """
@@ -16,18 +19,18 @@ class NovaComputerPilot:
         # Pequeño retraso después de cada comando para emular comportamiento humano
         pyautogui.PAUSE = 0.2
         self.os_type = platform.system()
-        print(f"[Computer Pilot] Inicializado en {self.os_type}. PyAutoGUI Failsafe ACTIVO.")
+        log.info("[Mouse] Inicializado en %s. Failsafe ACTIVO.", self.os_type)
 
     def move_to(self, x: int, y: int, speed: float = 0.5):
         """Mueve el mouse visualmente mostrando el recorrido."""
         try:
-            print(f"[Computer Pilot] Moviendo a ({x}, {y})")
+            log.debug("[Mouse] Moviendo a (%s, %s)", x, y)
             # Usa 'easeInOutQuad' para darle organicidad al movimiento robótico
             pyautogui.moveTo(x, y, speed, pyautogui.easeInOutQuad)
         except pyautogui.FailSafeException:
-            print("⚠️ [Computer Pilot] FAILSAFE ACTIVADO: Usuario canceló moviendo el ratón a la esquina.")
+            log.warning("[Mouse] FAILSAFE activado — usuario movió ratón a esquina")
         except Exception as e:
-            print(f"⚠️ [Computer Pilot] Error al mover ratón: {e}")
+            log.warning("[Mouse] Error moviendo ratón: %s", e)
 
     def click(self, x: int = None, y: int = None, clicks: int = 1):
         """Ejecuta un clic. Si X o Y son omitidos, clica en la posición actual."""
@@ -35,18 +38,18 @@ class NovaComputerPilot:
             if x is not None and y is not None:
                 self.move_to(x, y)
                 
-            print(f"[Computer Pilot] Click ({clicks}x)")
+            log.debug("[Mouse] Click %sx", clicks)
             pyautogui.click(clicks=clicks)
         except Exception as e:
-            print(f"⚠️ [Computer Pilot] Error al hacer click: {e}")
+            log.warning("[Mouse] Error click: %s", e)
 
     def type_text(self, text: str, interval: float = 0.05):
         """Teclea texto simulando pulsaciones humanas."""
         try:
-            print(f"[Computer Pilot] Escribiendo texto: {text[:15]}...")
+            log.debug("[Mouse] Escribiendo texto: %s...", text[:15])
             pyautogui.write(text, interval=interval)
         except Exception as e:
-            print(f"⚠️ [Computer Pilot] Error tecleando: {e}")
+            log.warning("[Mouse] Error tecleando: %s", e)
 
     def draw_blue_cursor_overlay(self):
         """
@@ -59,7 +62,7 @@ class NovaComputerPilot:
         # nativo, normalmente levantamos un canvas de Tkinter Always-On-Top.
         # Aquí seteamos el framework conceptual.
         current_x, current_y = pyautogui.position()
-        print(f"[Computer Pilot] 🔵 Cursor Azul rastreado en: ({current_x}, {current_y})")
+        log.debug("[Mouse] Cursor en (%s, %s)", current_x, current_y)
         return current_x, current_y
 
 # Instancia global para uso rápido
