@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import time
 import logging
 from datetime import datetime
 
@@ -34,6 +35,62 @@ def _pick_ollama_memory_model() -> str:
     except Exception:
         return "llama3.2:3b"
 
+def _ollama_embedding_available() -> bool:
+    """Verifica si Ollama está corriendo y tiene un modelo de embeddings."""
+    try:
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=2) as r:
+            data = json.loads(r.read())
+        models = [m["name"] for m in data.get("models", [])]
+        return any("embed" in m or "qwen3" in m or "nomic" in m for m in models)
+    except Exception:
+        return False
+
+
+class _SimpleJSONMemory:
+    """
+    Memoria de respaldo cuando Ollama/Qdrant no está disponible.
+    Persiste en JSON — sin embeddings, con búsqueda por palabras clave.
+    """
+    def __init__(self, path: str):
+        self._path = path
+        self._data: list[dict] = []
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    self._data = json.load(f)
+            except Exception:
+                self._data = []
+
+    def _save(self):
+        try:
+            with open(self._path, "w", encoding="utf-8") as f:
+                json.dump(self._data[-500:], f, ensure_ascii=False)  # últimas 500 entradas
+        except Exception:
+            pass
+
+    def add(self, text: str, role: str = "user"):
+        self._data.append({"text": text, "role": role,
+                           "ts": datetime.now().isoformat()})
+        self._save()
+
+    def search(self, query: str, limit: int = 5) -> str:
+        if not self._data:
+            return ""
+        words = set(query.lower().split())
+        scored = []
+        for item in self._data:
+            text_words = set(item["text"].lower().split())
+            score = len(words & text_words)
+            if score > 0:
+                scored.append((score, item["text"]))
+        scored.sort(reverse=True)
+        if not scored:
+            return ""
+        hits = [t for _, t in scored[:limit]]
+        return "Contexto histórico relevante:\n" + "\n".join(f"- {h}" for h in hits)
+
+
 class NovaNeuroMemory:
     """
     Sistema de Memoria Neuronal para NOVA 3.0 usando mem0.
@@ -43,9 +100,14 @@ class NovaNeuroMemory:
     
     def __init__(self, user_id="nova_user"):
         self.user_id = user_id
+        self._simple: _SimpleJSONMemory | None = None  # fallback siempre activo
         # Cargar .env para variables como OPENROUTER_API_KEY, GROQ_API_KEY
         from dotenv import load_dotenv
         load_dotenv()
+
+        # Inicializar memoria JSON de respaldo (siempre, independiente de Ollama)
+        _simple_path = os.path.expanduser("__DOTNOVA_PATH__/memory_simple.json")
+        self._simple = _SimpleJSONMemory(_simple_path)
 
         # Asegurar directorios
         os.makedirs(os.path.expanduser("__DOTNOVA_PATH__"), exist_ok=True)
@@ -54,6 +116,15 @@ class NovaNeuroMemory:
         self._lock_path = os.path.expanduser("__DOTNOVA_PATH__/qdrant.lock")
         try:
             import filelock
+            # Limpiar lock huérfano (proceso anterior murió sin liberarlo)
+            if os.path.exists(self._lock_path):
+                age = time.time() - os.path.getmtime(self._lock_path)
+                if age > 30:  # si tiene >30s nadie lo debería tener activo
+                    try:
+                        os.remove(self._lock_path)
+                        log.debug("[Memoria] Lock huérfano eliminado (age=%.0fs)", age)
+                    except OSError:
+                        pass
             self._qdrant_lock = filelock.FileLock(self._lock_path, timeout=5)
         except ImportError:
             self._qdrant_lock = None
@@ -106,8 +177,14 @@ class NovaNeuroMemory:
             },
             "extract_entities": False
         }
+        # Solo iniciar mem0/Qdrant si Ollama está disponible con embeddings
+        if not _ollama_embedding_available():
+            log.warning("[Memoria] Ollama sin embeddings — usando memoria JSON simple (Nova igual aprende)")
+            self.m = None
+            return
+
         log.info("[Memoria] Config: vector_store dims=2560, embedder=openai via Ollama")
-        
+
         try:
             # Dummy OPENAI_API_KEY para evitar errores del cliente openai en mem0
             if not os.getenv("OPENAI_API_KEY"):
@@ -118,7 +195,7 @@ class NovaNeuroMemory:
                 try:
                     self._qdrant_lock.acquire()
                 except Exception:
-                    log.warning("[Memoria] Otra instancia de Nova tiene Qdrant bloqueado — memoria desactivada.")
+                    log.warning("[Memoria] Qdrant bloqueado — usando memoria JSON simple")
                     self.m = None
                     return
 
@@ -165,6 +242,9 @@ class NovaNeuroMemory:
 
     def add_interaction(self, user_message: str, assistant_response: str) -> None:
         """Extrae memoria pasivamente de una conversación."""
+        if self._simple:
+            self._simple.add(f"User: {user_message}", "user")
+            self._simple.add(f"Nova: {assistant_response}", "assistant")
         if not self.m: return
         try:
             combined = f"User: {user_message}\nAssistant: {assistant_response}"
@@ -183,7 +263,8 @@ class NovaNeuroMemory:
 
     def search_context(self, query: str, limit: int = 5, threshold: float = 0.3) -> str:
         """Busca contexto relevante para la query actual."""
-        if not self.m: return ""
+        if not self.m:
+            return self._simple.search(query, limit) if self._simple else ""
         try:
             # Generar embedding de la query
             query_emb = self.m.embedding_model.embed(query)
@@ -232,6 +313,8 @@ class NovaNeuroMemory:
     # Métodos adicionales para compatibilidad con novaesp.py
     def save_turn(self, role: str, content: str) -> None:
         """Guarda un turno de conversación."""
+        if self._simple:
+            self._simple.add(content, role)
         if not self.m: return
         try:
             messages = [
