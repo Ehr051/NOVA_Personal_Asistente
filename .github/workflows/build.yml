@@ -3,8 +3,8 @@ name: Build Installers
 on:
   push:
     tags:
-      - "v*"          # Se activa solo al pushear un tag: git tag v3.1 && git push --tags
-  workflow_dispatch:  # También se puede lanzar manualmente desde GitHub
+      - "v*"
+  workflow_dispatch:
 
 jobs:
   build:
@@ -13,14 +13,11 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: Nova-Windows.exe
-            pyinstaller_extra: ""
+            artifact: Nova-Windows.zip
           - os: macos-latest
             artifact: Nova-macOS.zip
-            pyinstaller_extra: ""
           - os: ubuntu-latest
             artifact: Nova-Linux.tar.gz
-            pyinstaller_extra: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -34,87 +31,80 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      # ── Dependencias del sistema (Linux) ──────────────────────────────────
+      # ── Dependencias del sistema ──────────────────────────────────────────
+      - name: System deps (macOS) — portaudio para PyAudio
+        if: runner.os == 'macOS'
+        run: brew install portaudio
+
       - name: System deps (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            portaudio19-dev \
-            libsndfile1 \
-            espeak-ng \
-            mpg123 \
-            xvfb \
-            libgl1
+            portaudio19-dev libsndfile1 espeak-ng mpg123 xvfb libgl1
+
+      # ── Actualizar pip (forma correcta por plataforma) ────────────────────
+      - name: Upgrade pip (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pip install --upgrade pip
+
+      - name: Upgrade pip (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: pip install --upgrade pip
 
       # ── Dependencias Python ───────────────────────────────────────────────
-      - name: Install base dependencies
-        run: pip install --upgrade pip pyinstaller
-
-      - name: Install Nova dependencies (Windows)
-        if: runner.os == 'Windows'
+      - name: Install base deps
         run: |
-          pip install openai edge-tts SpeechRecognition python-dotenv duckduckgo-search pyautogui Pillow requests numpy groq anthropic qdrant-client mem0ai
-          pip install sounddevice pywin32 pycaw comtypes pyperclip PyQt5
-          pip install pyinstaller
+          pip install openai edge-tts SpeechRecognition python-dotenv duckduckgo-search pyautogui Pillow requests numpy groq anthropic qdrant-client mem0ai PyQt5
 
-      - name: Install Nova dependencies (macOS)
+      - name: Install platform deps (Windows)
+        if: runner.os == 'Windows'
+        run: pip install sounddevice pywin32 pycaw comtypes pyperclip
+
+      - name: Install platform deps (macOS)
         if: runner.os == 'macOS'
-        run: |
-          pip install openai edge-tts SpeechRecognition python-dotenv duckduckgo-search pyautogui Pillow requests numpy groq anthropic qdrant-client mem0ai
-          pip install PyAudio PyQt5 gtts rumps
-          pip install pyinstaller
+        run: pip install PyAudio gtts rumps
 
-      - name: Install Nova dependencies (Linux)
+      - name: Install platform deps (Linux)
         if: runner.os == 'Linux'
-        run: |
-          pip install openai edge-tts SpeechRecognition python-dotenv duckduckgo-search pyautogui Pillow requests numpy groq anthropic qdrant-client mem0ai
-          pip install PyAudio PyQt5 pyperclip pygame
-          pip install pyinstaller
+        run: pip install PyAudio pyperclip pygame
 
-      # ── Build PyInstaller ─────────────────────────────────────────────────
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Build with PyInstaller
         run: pyinstaller nova.spec --noconfirm
 
-      - name: Build (macOS/Linux)
-        if: runner.os != 'Windows'
-        run: pyinstaller nova.spec --noconfirm
-
-      # ── Empaquetar artefactos ─────────────────────────────────────────────
+      # ── Empaquetar ────────────────────────────────────────────────────────
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: powershell
-        run: |
-          Compress-Archive -Path dist/Nova/* -DestinationPath Nova-Windows.zip
-          # Renombrar exe principal para descarga directa
-          Copy-Item dist/Nova/Nova.exe Nova-Windows.exe -ErrorAction SilentlyContinue
+        run: Compress-Archive -Path dist\Nova\* -DestinationPath Nova-Windows.zip
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
           cd dist
           zip -r ../Nova-macOS.zip Nova.app 2>/dev/null || zip -r ../Nova-macOS.zip Nova/
-          cd ..
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: tar -czf Nova-Linux.tar.gz -C dist Nova/
 
-      # ── Subir artefactos al workflow (para descargar desde Actions) ───────
+      # ── Subir artefacto ───────────────────────────────────────────────────
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
             Nova-Windows.zip
-            Nova-Windows.exe
             Nova-macOS.zip
             Nova-Linux.tar.gz
           if-no-files-found: ignore
           retention-days: 30
 
-  # ── Crear Release automático cuando se pushea un tag v* ─────────────────
+  # ── Release automático en tags v* ────────────────────────────────────────
   release:
     needs: build
     runs-on: ubuntu-latest
