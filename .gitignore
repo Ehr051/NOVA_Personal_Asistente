@@ -50,5 +50,8 @@ tests/reports/
 tests/__pycache__/
 tests/model_stats.json
 
-# seguimiento de workflow locales - no incluir en repositorio principal
+# Notas de desarrollo local — no incluir en repositorio principal
 */workflow.md
+docs/NOVA_ROADMAP.md
+docs/WORKFLOW.md
+docs/STATUS.md
