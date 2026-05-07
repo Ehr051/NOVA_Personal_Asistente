@@ -209,26 +209,60 @@ def create_desktop_launcher() -> None:
             warn(f"No se pudo crear Nova.app en escritorio: {e}")
 
     elif PLATFORM == "windows":
-        # Crear un .bat en el escritorio
-        launcher = os.path.join(desktop, "Nova.bat")
+        # Crear acceso directo .lnk con ícono via PowerShell
+        ico  = os.path.join(base, "assets", "nova.ico")
+        lnk  = os.path.join(desktop, "Nova.lnk")
+        main = os.path.join(base, "main.py")
+        python_exe = sys.executable.replace("\\", "\\\\")
+        ico_path   = ico.replace("\\", "\\\\")
+        lnk_path   = lnk.replace("\\", "\\\\")
+        main_path  = main.replace("\\", "\\\\")
+        base_path  = base.replace("\\", "\\\\")
+        ps_script = (
+            f'$ws = New-Object -ComObject WScript.Shell; '
+            f'$sc = $ws.CreateShortcut("{lnk_path}"); '
+            f'$sc.TargetPath = "{python_exe}"; '
+            f'$sc.Arguments = \'"{main_path}"\'; '
+            f'$sc.WorkingDirectory = "{base_path}"; '
+            f'$sc.Description = "Nova Personal Assistant"; '
+            + (f'$sc.IconLocation = "{ico_path}"; ' if os.path.exists(ico) else '') +
+            f'$sc.Save()'
+        )
         try:
-            with open(launcher, "w") as f:
-                f.write(f'@echo off\ncd /d "{base}"\npython main.py\npause\n')
-            ok(f"Lanzador creado: {launcher}")
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0 and os.path.exists(lnk):
+                ok(f"Lanzador creado: {lnk}")
+            else:
+                # Fallback: .bat sin ícono
+                bat = os.path.join(desktop, "Nova.bat")
+                with open(bat, "w") as f:
+                    f.write(f'@echo off\ncd /d "{base}"\npython main.py\npause\n')
+                warn(f"Shortcut no disponible — creado {bat} (sin ícono)")
         except Exception as e:
             warn(f"No se pudo crear lanzador en escritorio: {e}")
 
     elif PLATFORM == "linux":
         launcher = os.path.join(desktop, "nova.desktop")
-        python = sys.executable
+        python   = sys.executable
+        png      = os.path.join(base, "assets", "nova.png")
+        icon_line = f"Icon={png}" if os.path.exists(png) else "Icon=utilities-terminal"
         try:
             with open(launcher, "w") as f:
                 f.write(
                     f"[Desktop Entry]\nType=Application\nName=Nova\n"
+                    f"Comment=Nova Personal Assistant\n"
                     f"Exec={python} {os.path.join(base, 'main.py')}\n"
-                    f"Path={base}\nTerminal=true\n"
+                    f"Path={base}\n{icon_line}\nTerminal=true\n"
+                    f"Categories=Utility;AI;\n"
                 )
             os.chmod(launcher, 0o755)
+            # Marcar como confiable (GNOME/KDE)
+            subprocess.run(["gio", "set", launcher,
+                            "metadata::trusted", "true"],
+                           capture_output=True)
             ok(f"Lanzador creado: {launcher}")
         except Exception as e:
             warn(f"No se pudo crear lanzador en escritorio: {e}")
