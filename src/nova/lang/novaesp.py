@@ -160,6 +160,58 @@ VOICE_RATE    = os.getenv("NOVA_VOICE_RATE", "150")
 FOLLOWUP_WINDOW_SEC = int(os.getenv("FOLLOWUP_WINDOW_SEC", "33"))
 REQUIRE_WAKE_WORD   = os.getenv("REQUIRE_WAKE_WORD", "1").strip() != "0"
 
+# ─── Detección de idioma ──────────────────────────────────────────────────────
+
+_EN_WORDS = frozenset([
+    "the","is","are","you","what","how","can","please","hello","hi",
+    "could","would","should","do","does","did","have","has","will",
+    "when","where","why","who","this","that","it","a","an","i","my",
+])
+_FR_WORDS = frozenset([
+    "le","la","les","est","vous","comment","pourquoi","quand","bonjour",
+    "merci","oui","non","avec","pour","dans","je","tu","il","elle","nous",
+])
+_PT_WORDS = frozenset([
+    "você","obrigado","como","quando","porque","olá","por","para","não",
+    "sim","está","são","uma","mas","eu","ele","ela","nós","isso","aqui",
+])
+
+_LANG_NAMES: dict[str, str] = {
+    "en": "inglés",
+    "fr": "francés",
+    "pt": "portugués",
+    "de": "alemán",
+    "it": "italiano",
+}
+
+# edge-tts voices para idiomas no-español
+_LANG_EDGE_VOICES: dict[str, str] = {
+    "en": os.getenv("EDGE_VOICE_EN", "en-US-GuyNeural"),
+    "fr": os.getenv("EDGE_VOICE_FR", "fr-FR-HenriNeural"),
+    "pt": os.getenv("EDGE_VOICE_PT", "pt-BR-AntonioNeural"),
+    "de": os.getenv("EDGE_VOICE_DE", "de-DE-ConradNeural"),
+    "it": os.getenv("EDGE_VOICE_IT", "it-IT-DiegoNeural"),
+}
+
+# macOS say voices para idiomas no-español
+_LANG_MAC_VOICES: dict[str, str] = {
+    "en": os.getenv("NOVA_VOICE_EN", "Samantha"),
+    "fr": os.getenv("NOVA_VOICE_FR", "Thomas"),
+    "pt": os.getenv("NOVA_VOICE_PT", "Luciana"),
+}
+
+
+def _detect_lang(text: str) -> str:
+    """Returns ISO 639-1 code: 'es', 'en', 'fr', 'pt'. Defaults to 'es'."""
+    words = set(text.lower().split())
+    if len(words & _EN_WORDS) >= 2:
+        return "en"
+    if len(words & _FR_WORDS) >= 2:
+        return "fr"
+    if len(words & _PT_WORDS) >= 2:
+        return "pt"
+    return "es"
+
 
 # ─── TTS con barge-in ────────────────────────────────────────────────────────
 
@@ -266,18 +318,26 @@ def _clean_for_speech(text: str) -> str:
     return text.strip()
 
 
-def speak(text: str, hud: NovaHUD) -> None:
+def speak(text: str, hud: NovaHUD, lang: str = "es") -> None:
     """
     Reproduce texto con barge-in.
     Intenta edge-tts neural primero; si falla (sin internet, error), usa macOS say.
+    lang: ISO 639-1 code — selecciona voz adecuada para idiomas no-español.
     """
-    global _say_proc, _tmp_audio
+    global _say_proc, _tmp_audio, EDGE_VOICE, NOVA_VOICE
 
     interrupt_speech()  # Detener cualquier iteración anterior instantáneamente.
 
     hud.put_state(status="SPEAKING")
     clean = _clean_for_speech(text)
     voice_text = clean if len(clean) <= 1500 else clean[:1500] + "."
+
+    # ── Seleccionar voz según idioma ─────────────────────────────────────────
+    _orig_edge  = EDGE_VOICE
+    _orig_mac   = NOVA_VOICE
+    if lang != "es":
+        EDGE_VOICE  = _LANG_EDGE_VOICES.get(lang, EDGE_VOICE)
+        NOVA_VOICE  = _LANG_MAC_VOICES.get(lang, NOVA_VOICE)
 
     # ── Intentar edge-tts ───────────────────────────────────────────────────
     edge_ok = _speak_edge(voice_text)
@@ -286,6 +346,10 @@ def speak(text: str, hud: NovaHUD) -> None:
     if not edge_ok:
         from nova.platform import speak_tts
         _say_proc = speak_tts(voice_text, voice=NOVA_VOICE, rate=VOICE_RATE)
+
+    # Restaurar voces originales
+    EDGE_VOICE = _orig_edge
+    NOVA_VOICE = _orig_mac
 
     # ── Barge-in mientras reproduce ──────────────────────────────────────────
     if _say_proc:
@@ -571,12 +635,31 @@ def _vault_context_for(user_text: str) -> str:
         return ""
     query = " ".join(terms[:5])
     try:
-        return nova_memory.vault_search_text(query, top_k=3)
+        result = nova_memory.vault_search_text(query, top_k=3)
+        if result:
+            return result
     except Exception:
-        return ""
+        pass
+    # Fallback file-based: usa nova_cerebro que busca en TODO el vault
+    try:
+        from nova.connectors.nova_cerebro import cerebro_buscar
+        resultados = cerebro_buscar(query, max_resultados=3)
+        if resultados:
+            lines = [f"[Cerebro: '{query}']"]
+            for r in resultados:
+                lines.append(f"• {r['titulo']} ({r['archivo']}): {r['extracto'][:150]}")
+            return "\n".join(lines)
+    except Exception:
+        pass
+    return ""
 
 
-def _build_messages(history: list[dict], base_system: str, extra_context: str = "") -> list[dict]:
+def _build_messages(history: list[dict], base_system: str, extra_context: str = "") -> tuple[list[dict], str]:
+    """
+    Returns (messages, detected_lang).
+    detected_lang is 'es' by default; non-Spanish when the last user message
+    triggers language detection so callers can choose TTS voice accordingly.
+    """
     facts = nova_memory.get_all_facts()
     system = base_system
     system += (
@@ -606,6 +689,12 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
     if extra_context:
         system += f"\n\n[Información en tiempo real]\n{extra_context}"
 
+    # Modo políglota: detectar idioma del usuario e instruir al LLM
+    detected_lang = _detect_lang(last_user) if last_user else "es"
+    if detected_lang != "es":
+        lang_name = _LANG_NAMES.get(detected_lang, detected_lang)
+        system += f"\n\nResponde SIEMPRE en {lang_name}. El usuario está escribiendo en {lang_name}."
+
     msgs = [{"role": "system", "content": system}]
     # Filtrar roles "system" y normalizar content multimodal (imágenes en historial rompen Groq 400)
     for m in history[-(MAX_HISTORY * 2):]:
@@ -623,7 +712,7 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
         elif not isinstance(content, str):
             content = str(content)
         msgs.append({"role": m["role"], "content": content or " "})
-    return msgs
+    return msgs, detected_lang
 
 
 # ─── Loop principal de NOVA (corre en hilo background) ─────────────────────
@@ -811,7 +900,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             print("  [búsqueda web...]")
             extra = skills.web_search_for_llm(text)
         try:
-            msgs   = _build_messages(history, router.system_prompt, extra)
+            msgs, resp_lang = _build_messages(history, router.system_prompt, extra)
             result = router.route(msgs)
             response = result["response"]
             history.append({"role": "assistant", "content": response})
@@ -827,7 +916,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                 status="SPEAKING", response_text=response, model_info=model_info,
                 tokens_used=tokens, provider=provider, budget_remaining_pct=budget_pct,
             )
-            speak(response, hud)
+            speak(response, hud, lang=resp_lang)
         except Exception as e:
             err = f"Error al procesar: {e}"
             print(f"  [ERROR] {err}")
@@ -1013,7 +1102,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
 
         # ── LLM ───────────────────────────────────────────────
         history.append({"role": "user", "content": user_input})
-        msgs = _build_messages(history, router.system_prompt, extra)
+        msgs, resp_lang = _build_messages(history, router.system_prompt, extra)
 
         try:
             result = router.route(msgs)
@@ -1050,7 +1139,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
         nova_memory.save_turn("assistant", response)
         history.append({"role": "assistant", "content": response})
 
-        speak(response, hud)
+        speak(response, hud, lang=resp_lang)
 
     # ── Resumen final ─────────────────────────────────────────
     stats = router.get_session_summary()

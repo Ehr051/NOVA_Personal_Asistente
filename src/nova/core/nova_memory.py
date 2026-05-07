@@ -302,40 +302,71 @@ def diary_append(text: str) -> str:
 
 def load_vault_context() -> str:
     """
-    Carga el contexto del Gran Cerebro desde el vault para enriquecer
-    el system prompt de Nova. Devuelve texto compacto o '' si falla.
+    Carga el contexto del Gran Cerebro para enriquecer el system prompt.
 
-    Lee en orden de prioridad:
-      1. NOVA/Briefing.md    — índice de proyectos + memoria
-      2. NOVA/Memoria/facts.md — datos del usuario
-      3. Claude/memoria/MEMORY.md — índice de memorias de Claude Code
+    Con API activa: lee NOVA/Briefing.md + facts + Claude/memoria/MEMORY.md
+    Sin API (file-based): escanea TODO el vault, lista carpetas y últimas notas
+                          modificadas de cada sección (no solo NOVA/).
     """
-    if not _OBS_KEY:
-        return ""
-
     sections: list[str] = []
 
-    # 1. Briefing (lista de proyectos activos)
-    briefing = _obs_request("GET", "NOVA/Briefing.md")
-    if briefing:
-        # Extraer solo la sección de proyectos (sin header, compacto)
-        lines = [l for l in briefing.splitlines()
-                 if l.startswith("- **") or l.startswith("## Proyectos")]
-        if lines:
-            sections.append("PROYECTOS ACTIVOS:\n" + "\n".join(lines[:20]))
+    if _OBS_KEY:
+        # ── Modo API ─────────────────────────────────────────────────────────
+        briefing = _obs_request("GET", "NOVA/Briefing.md")
+        if briefing:
+            lines = [l for l in briefing.splitlines()
+                     if l.startswith("- **") or l.startswith("## Proyectos")]
+            if lines:
+                sections.append("PROYECTOS ACTIVOS:\n" + "\n".join(lines[:20]))
 
-    # 2. Facts del usuario (memoria persistente de NOVA)
-    facts = get_all_facts()
-    if facts:
-        sections.append(facts)
+        facts = get_all_facts()
+        if facts:
+            sections.append(facts)
 
-    # 3. Memorias clave de Claude Code
-    memory_index = _obs_request("GET", "Claude/memoria/MEMORY.md")
-    if memory_index:
-        # Solo las primeras líneas (índice compacto)
-        relevant = [l for l in memory_index.splitlines()
-                    if l.startswith("- [") or l.startswith("#")]
-        if relevant:
-            sections.append("MEMORIA CLAUDE CODE:\n" + "\n".join(relevant[:10]))
+        memory_index = _obs_request("GET", "Claude/memoria/MEMORY.md")
+        if memory_index:
+            relevant = [l for l in memory_index.splitlines()
+                        if l.startswith("- [") or l.startswith("#")]
+            if relevant:
+                sections.append("MEMORIA CLAUDE CODE:\n" + "\n".join(relevant[:10]))
+
+    else:
+        # ── Modo file-based: todo el vault ────────────────────────────────────
+        vault = os.path.expanduser(os.getenv("CEREBRO_VAULT", "~/Cerebro"))
+        from pathlib import Path as _Path
+        vault_path = _Path(vault)
+        if not vault_path.exists():
+            return ""
+
+        # Carpetas de primer nivel con cantidad de notas
+        carpetas: dict[str, list] = {}
+        for md in vault_path.rglob("*.md"):
+            top = md.relative_to(vault_path).parts[0] if len(md.relative_to(vault_path).parts) > 1 else "."
+            carpetas.setdefault(top, []).append(md)
+
+        resumen_carpetas = []
+        for carpeta, archivos in sorted(carpetas.items()):
+            resumen_carpetas.append(f"  {carpeta}/ ({len(archivos)} notas)")
+        sections.append("VAULT CEREBRO — ESTRUCTURA:\n" + "\n".join(resumen_carpetas))
+
+        # Últimas 8 notas modificadas en TODO el vault (no solo NOVA/)
+        todos = sorted(vault_path.rglob("*.md"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        recientes = []
+        for f in todos[:8]:
+            rel = str(f.relative_to(vault_path))
+            try:
+                primeras = f.read_text(encoding="utf-8", errors="replace").splitlines()
+                extracto = next((l.strip() for l in primeras[1:] if l.strip()), "")[:80]
+            except Exception:
+                extracto = ""
+            recientes.append(f"  {rel}: {extracto}")
+        if recientes:
+            sections.append("NOTAS RECIENTES (todo el vault):\n" + "\n".join(recientes))
+
+        # Facts del usuario (siempre disponibles desde SQLite)
+        facts = get_all_facts()
+        if facts:
+            sections.append(facts)
 
     return "\n\n".join(sections)

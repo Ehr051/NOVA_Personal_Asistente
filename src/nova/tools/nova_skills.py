@@ -2122,6 +2122,12 @@ try:
 except ImportError:
     _HAS_LSP = False
 
+try:
+    from nova.tools.nova_ocr import read_file_as_context as _ocr_read
+    _HAS_OCR = True
+except ImportError:
+    _HAS_OCR = False
+
 def skill_especialista(texto: str) -> str:
     """Invoca un agente especializado (firmware, arquitecto, IA, etc.) via Groq/OpenRouter.
     Si la respuesta contiene código Python o bash, lo ejecuta automáticamente.
@@ -2303,6 +2309,27 @@ def skill_leer_archivo_proyecto(texto: str) -> str:
         return f"📄 {rel} ({len(lines)} líneas):\n```\n{preview}{extra}\n```"
     except Exception as e:
         return f"Error leyendo archivo: {e}"
+
+
+def skill_leer_archivo(args: str) -> str:
+    """Lee cualquier archivo (PDF, DOCX, XLSX, imagen, etc.) y devuelve su contenido como contexto."""
+    if not _HAS_OCR:
+        return (
+            "Módulo OCR no disponible. Instalá: pip install markitdown\n"
+            "Opcionalmente para OCR de imágenes: pip install pytesseract pillow"
+        )
+
+    raw = args.strip().strip("'\"")
+    path = Path(raw)
+
+    if not path.exists():
+        path = Path.cwd() / raw
+
+    if not path.exists():
+        return f"No encontré el archivo: {raw}"
+
+    return _ocr_read(path)
+
 
 
 def skill_editar_proyecto(texto: str) -> str:
@@ -4079,6 +4106,13 @@ _INTENTS: list[tuple] = [
      r"(?:el\s+|ese\s+|ese\s+)?(?:mail|email|correo)\s+([0-9a-fA-F]{6,})",    skill_email_accion, 0),
     (r"(?:archiva?|elimina?|borra?|marca?|agenda?|registra?)\s+.*"
      r"(?:mail|email|correo).*([0-9a-fA-F]{6,})",                              skill_email_accion, 0),
+
+    # ── OCR / Lectura de archivos ─────────────────────────────
+    (r"(?:lee|leer|analiza|analizar|convierte?|extrae?|abre?)\s+"
+     r"(?:el\s+|este\s+|la\s+)?(?:archivo|pdf|word|excel|documento|imagen|foto)\b",
+                                                                               skill_leer_archivo, 0),
+    (r"(?:lee|leer|analiza)\s+.+\.(?:pdf|docx|xlsx|pptx|txt|md|csv|png|jpg|jpeg)\b",
+                                                                               skill_leer_archivo, 0),
 ]
 
 # Frases completas que indican búsqueda en tiempo real
@@ -4505,6 +4539,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_git_commit, "text"),
     "git_pr":          ("Generar descripción de Pull Request basada en los commits del branch",
                         skill_git_pr, "text"),
+    "skill_leer_archivo": ("Convierte PDF/DOCX/XLSX/imágenes a Markdown y los muestra como contexto",
+                        skill_leer_archivo, "text"),
 }
 
 
