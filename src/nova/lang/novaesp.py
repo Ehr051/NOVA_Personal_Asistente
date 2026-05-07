@@ -26,11 +26,32 @@ import re
 import subprocess
 import threading
 import time
-import audioop
-import pyaudio
 import atexit
 import asyncio
 import tempfile
+
+# ─── Audio: audioop removido en Python 3.13 ──────────────────────────────────
+try:
+    import audioop
+    _AUDIOOP_AVAILABLE = True
+except ImportError:
+    _AUDIOOP_AVAILABLE = False
+
+# sounddevice: preferido en Windows (WASAPI nativo, sin compilación)
+# PyAudio: fallback para macOS/Linux
+try:
+    import sounddevice as _sd
+    import numpy as _np_audio
+    _SOUNDDEVICE_AVAILABLE = True
+    _PYAUDIO_AVAILABLE = False
+except ImportError:
+    _SOUNDDEVICE_AVAILABLE = False
+    try:
+        import pyaudio as _pyaudio
+        _PYAUDIO_AVAILABLE = True
+    except ImportError:
+        _pyaudio = None
+        _PYAUDIO_AVAILABLE = False
 
 try:
     import edge_tts as _edge_tts
@@ -290,38 +311,64 @@ def _monitor_barge_in(proc: subprocess.Popen) -> None:
         proc.wait()
         return
 
-    pa     = pyaudio.PyAudio()
-    stream = None
-    try:
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            input=True,
-            frames_per_buffer=1024,
-        )
-        # Espera inicial para que los altavoces no se detecten a sí mismos
-        warmup_chunks = 7   # ~0.45 s
-        for _ in range(warmup_chunks):
-            if proc.poll() is not None:
-                return
-            stream.read(1024, exception_on_overflow=False)
+    # ── sounddevice (Windows/Linux sin compilación) ───────────────────────────
+    if _SOUNDDEVICE_AVAILABLE:
+        CHUNK = 1024
+        RATE  = 16000
+        try:
+            # Warmup ~0.45 s
+            for _ in range(7):
+                if proc.poll() is not None:
+                    return
+                _sd.rec(CHUNK, samplerate=RATE, channels=1, dtype="int16")
+                _sd.wait()
+            # Monitoreo activo
+            while proc.poll() is None:
+                chunk = _sd.rec(CHUNK, samplerate=RATE, channels=1, dtype="int16")
+                _sd.wait()
+                energy = int(_np_audio.sqrt(_np_audio.mean(chunk.astype("float32") ** 2)))
+                if energy > BARGE_IN_THRESHOLD:
+                    proc.kill()
+                    print("\n  [barge-in] interrumpido por el usuario")
+                    return
+        except Exception:
+            pass
+        return
 
-        # Monitoreo activo
-        while proc.poll() is None:
-            data   = stream.read(1024, exception_on_overflow=False)
-            energy = audioop.rms(data, 2)
-            if energy > BARGE_IN_THRESHOLD:
-                proc.kill()
-                print("\n  [barge-in] interrumpido por el usuario")
-                return
-    except Exception:
-        pass
-    finally:
-        if stream:
-            stream.stop_stream()
-            stream.close()
-        pa.terminate()
+    # ── PyAudio (macOS/Linux con PyAudio instalado) ───────────────────────────
+    if _PYAUDIO_AVAILABLE and _AUDIOOP_AVAILABLE:
+        pa     = _pyaudio.PyAudio()
+        stream = None
+        try:
+            stream = pa.open(
+                format=_pyaudio.paInt16,
+                channels=1,
+                rate=16000,
+                input=True,
+                frames_per_buffer=1024,
+            )
+            for _ in range(7):
+                if proc.poll() is not None:
+                    return
+                stream.read(1024, exception_on_overflow=False)
+            while proc.poll() is None:
+                data   = stream.read(1024, exception_on_overflow=False)
+                energy = audioop.rms(data, 2)
+                if energy > BARGE_IN_THRESHOLD:
+                    proc.kill()
+                    print("\n  [barge-in] interrumpido por el usuario")
+                    return
+        except Exception:
+            pass
+        finally:
+            if stream:
+                stream.stop_stream()
+                stream.close()
+            pa.terminate()
+        return
+
+    # ── Fallback: sin audio, esperar que termine solo ─────────────────────────
+    proc.wait()
 
 
 # ─── Wake word ───────────────────────────────────────────────────────────────

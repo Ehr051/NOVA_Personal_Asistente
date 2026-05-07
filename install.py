@@ -46,7 +46,6 @@ BASE_REQUIREMENTS = [
     "openai>=1.0.0",
     "edge-tts>=6.1.9",
     "SpeechRecognition",
-    "PyAudio",
     "python-dotenv",
     "duckduckgo-search",
     "pyautogui",
@@ -58,6 +57,13 @@ BASE_REQUIREMENTS = [
     "groq",
     "anthropic",
 ]
+
+# PyAudio requiere compilación — es opcional, sounddevice es el reemplazo sin compilación
+OPTIONAL_AUDIO = {
+    "macos":   ["PyAudio"],
+    "linux":   ["PyAudio"],
+    "windows": [],  # Windows usa sounddevice (WASAPI), PyAudio requiere Visual C++ Build Tools
+}
 
 # ─── Requisitos por plataforma ───────────────────────────────────────────────
 
@@ -74,7 +80,7 @@ PLATFORM_REQUIREMENTS = {
         "pycaw",           # control de volumen Windows
         "comtypes",        # pycaw dep
         "pyperclip",       # portapapeles cross-platform
-        "playsound",       # reproducción de audio
+        "sounddevice",     # grabación de audio sin compilación (WASAPI)
     ],
     "linux": [
         "PyQt5",
