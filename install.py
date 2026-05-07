@@ -142,6 +142,53 @@ def check_system_deps() -> None:
             warn(f"{binary} no encontrado — instalar con: {install_cmd}")
 
 
+def create_desktop_launcher() -> None:
+    """Crea un acceso directo / lanzador en el escritorio según el OS."""
+    base = os.path.dirname(os.path.abspath(__file__))
+    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+    if not os.path.isdir(desktop):
+        return
+
+    if PLATFORM == "macos":
+        script = os.path.join(base, "launch_nova.sh")
+        if not os.path.exists(script):
+            return
+        # Crear un .command doble-clicable en el escritorio
+        launcher = os.path.join(desktop, "Nova.command")
+        try:
+            with open(launcher, "w") as f:
+                f.write(f'#!/bin/bash\ncd "{base}"\nbash launch_nova.sh\n')
+            os.chmod(launcher, 0o755)
+            ok(f"Lanzador creado: {launcher}")
+        except Exception as e:
+            warn(f"No se pudo crear lanzador en escritorio: {e}")
+
+    elif PLATFORM == "windows":
+        # Crear un .bat en el escritorio
+        launcher = os.path.join(desktop, "Nova.bat")
+        try:
+            with open(launcher, "w") as f:
+                f.write(f'@echo off\ncd /d "{base}"\npython main.py\npause\n')
+            ok(f"Lanzador creado: {launcher}")
+        except Exception as e:
+            warn(f"No se pudo crear lanzador en escritorio: {e}")
+
+    elif PLATFORM == "linux":
+        launcher = os.path.join(desktop, "nova.desktop")
+        python = sys.executable
+        try:
+            with open(launcher, "w") as f:
+                f.write(
+                    f"[Desktop Entry]\nType=Application\nName=Nova\n"
+                    f"Exec={python} {os.path.join(base, 'main.py')}\n"
+                    f"Path={base}\nTerminal=true\n"
+                )
+            os.chmod(launcher, 0o755)
+            ok(f"Lanzador creado: {launcher}")
+        except Exception as e:
+            warn(f"No se pudo crear lanzador en escritorio: {e}")
+
+
 def check_env_file() -> bool:
     env_path = os.path.join(os.path.dirname(__file__), ".env")
     example_path = os.path.join(os.path.dirname(__file__), ".env.example")

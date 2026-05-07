@@ -70,7 +70,7 @@ class NovaNeuroMemory:
                     "max_tokens": 1500,
                 }
             }
-            print("[Memoria] LLM extracción: Groq / llama-3.1-8b-instant")
+            log.info("[Memoria] LLM extracción: Groq / llama-3.1-8b-instant")
         else:
             _ollama_llm = _pick_ollama_memory_model()
             _mem0_llm = {
@@ -82,7 +82,7 @@ class NovaNeuroMemory:
                     "max_tokens": 1500,
                 }
             }
-            print(f"[Memoria] LLM extracción: Ollama / {_ollama_llm}")
+            log.info("[Memoria] LLM extracción: Ollama / %s", _ollama_llm)
 
         # Configurar mem0: embeddings local (Ollama), extracción LLM (Groq/Ollama)
         config = {
@@ -106,7 +106,7 @@ class NovaNeuroMemory:
             },
             "extract_entities": False
         }
-        print("[Memoria] Config: vector_store[embedding_model_dims=2560], embedder=openai via Ollama...")
+        log.info("[Memoria] Config: vector_store dims=2560, embedder=openai via Ollama")
         
         try:
             # Dummy OPENAI_API_KEY para evitar errores del cliente openai en mem0
@@ -118,38 +118,38 @@ class NovaNeuroMemory:
                 try:
                     self._qdrant_lock.acquire()
                 except Exception:
-                    print("⚠️ [Memoria] Otra instancia de Nova tiene Qdrant bloqueado — memoria desactivada.")
+                    log.warning("[Memoria] Otra instancia de Nova tiene Qdrant bloqueado — memoria desactivada.")
                     self.m = None
                     return
 
             self.m = Memory.from_config(config) if _MEM0_AVAILABLE else None
             
             if self.m:
-                print("[Memoria] Memoria vectorial inicializada (OpenAI embedder via Ollama)")
+                log.info("[Memoria] Memoria vectorial inicializada (OpenAI embedder via Ollama)")
                 # Verificar dimensión de la colección
                 try:
                     vs = self.m.vector_store
                     info = vs.client.get_collection(config['vector_store']['config']['collection_name'])
-                    print(f"[Memoria] Colección '{config['vector_store']['config']['collection_name']}' dimensión: {info.config.params.vectors.size}")
+                    log.info("[Memoria] Colección '%s' dimensión: %s", config['vector_store']['config']['collection_name'], info.config.params.vectors.size)
                 except Exception as e:
-                    print(f"[Memoria] No se pudo verificar colección: {e}")
+                    log.debug("[Memoria] No se pudo verificar colección: %s", e)
             if not _MEM0_AVAILABLE:
-                print("[Memoria] mem0 no disponible, funcionando en modo limitado")
+                log.warning("[Memoria] mem0 no disponible, funcionando en modo limitado")
             elif self.m is None:
-                print("⚠️ [Memoria] Error iniciando Qdrant/Mem0 (posible problema de permisos o ruta)")
-                print("⚠️ [Memoria] Memoria Vectorial arranca en modo seguro (DESACTIVADA).")
+                log.warning("[Memoria] Error iniciando Qdrant/Mem0 (permisos o ruta)")
+                log.warning("[Memoria] Memoria Vectorial arranca en modo seguro (DESACTIVADA).")
         except Exception as e:
             log.warning("[Memoria] Error iniciando Qdrant/Mem0: %s", e)
-            print("⚠️ [Memoria] Memoria Vectorial arranca en modo seguro (DESACTIVADA).")
+            log.warning("[Memoria] Memoria Vectorial arranca en modo seguro (DESACTIVADA).")
             self.m = None
 
     def remember(self, fact: str) -> None:
         """Guarda un hecho específico forzado."""
         if not self.m: 
-            print("[Memoria] remember: mem no disponible")
+            log.debug("[Memoria] remember: mem no disponible")
             return
         try:
-            print(f"[Memoria] Guardando hecho: {fact[:50]}...")
+            log.debug("[Memoria] Guardando hecho: %s", fact[:50])
             embedding = self.m.embedding_model.embed(fact)
             vs = self.m.vector_store
             from qdrant_client.models import PointStruct
@@ -159,7 +159,7 @@ class NovaNeuroMemory:
                 payload={'text': fact, 'user_id': self.user_id, 'role': 'user', 'type': 'fact'}
             )
             vs.client.upsert(collection_name=vs.collection_name, points=[point])
-            print("[Memoria] Hecho guardado via upsert")
+            log.debug("[Memoria] Hecho guardado via upsert")
         except Exception as e:
             log.warning("[Memoria] Error guardando hecho: %s", e)
 
@@ -177,9 +177,9 @@ class NovaNeuroMemory:
                 payload={'text': combined, 'user_id': self.user_id, 'role': 'conversation', 'type': 'interaction'}
             )
             vs.client.upsert(collection_name=vs.collection_name, points=[point])
-            print("[Memoria] Interacción guardada via upsert")
+            log.debug("[Memoria] Interacción guardada via upsert")
         except Exception as e:
-            print(f"⚠️ [Memoria] No se pudo guardar la interacción: {e}")
+            log.warning("[Memoria] No se pudo guardar la interacción: %s", e)
 
     def search_context(self, query: str, limit: int = 5, threshold: float = 0.3) -> str:
         """Busca contexto relevante para la query actual."""
@@ -239,7 +239,7 @@ class NovaNeuroMemory:
             ]
             self.m.add(messages, user_id=self.user_id)
         except Exception as e:
-            print(f"[Memoria] Error guardando turno: {e}")
+            log.warning("[Memoria] Error guardando turno: %s", e)
 
     def get_recent_turns(self, limit: int = 20) -> list[dict]:
         """Devuelve los últimos N turnos en formato Chat API."""
@@ -266,7 +266,7 @@ class NovaNeuroMemory:
                     turns.append({"role": role, "content": text})
             return turns
         except Exception as e:
-            print(f"[Memoria] Error obteniendo turns recientes: {e}")
+            log.warning("[Memoria] Error obteniendo turns recientes: %s", e)
             return []
 
 # Singleton instance

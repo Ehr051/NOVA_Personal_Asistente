@@ -6,9 +6,17 @@ Nova CLI - Interfaz de línea de comandos para gestionar skills, agents y config
 import argparse
 import sys
 import os
+import logging
 import subprocess
 import json
 from pathlib import Path
+
+# Silenciar loggers en uso normal — solo WARNING+ en consola
+_log_level = getattr(logging, os.getenv("NOVA_LOG_LEVEL", "WARNING").upper(), logging.WARNING)
+logging.basicConfig(level=_log_level, format="%(levelname)s %(name)s: %(message)s")
+for _noisy in ("httpx", "httpcore", "openai", "groq", "anthropic",
+               "qdrant_client", "mem0", "urllib3", "asyncio"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # Añadir el directorio src al path para importaciones
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))

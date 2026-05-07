@@ -7,6 +7,17 @@ Para el REPL conversacional en terminal: `./nova chat`
 """
 import sys
 import os
+import logging
+
+# Silenciar loggers de librerías y de Nova en uso normal.
+# Solo warnings/errores reales llegan a consola.
+# Activar DEBUG con: NOVA_LOG_LEVEL=DEBUG python main.py
+_log_level = getattr(logging, os.getenv("NOVA_LOG_LEVEL", "WARNING").upper(), logging.WARNING)
+logging.basicConfig(level=_log_level, format="%(levelname)s %(name)s: %(message)s")
+# Silenciar libs ruidosas siempre (excepto WARNING+)
+for _noisy in ("httpx", "httpcore", "openai", "groq", "anthropic",
+               "qdrant_client", "mem0", "urllib3", "asyncio"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # Cuando se empaqueta con PyInstaller, sys.executable es el .exe/.app
 # El .env debe estar junto al ejecutable, no dentro del bundle
