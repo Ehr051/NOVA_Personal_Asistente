@@ -402,6 +402,125 @@ def _strip_code_fence(content: str) -> str:
     return content
 
 
+# ── Tests automáticos ────────────────────────────────────────────────────────
+
+_PY_FUNC_RE  = re.compile(r"^def\s+([a-zA-Z_]\w*)\s*\(", re.MULTILINE)
+_PY_CLASS_RE = re.compile(r"^class\s+([a-zA-Z_]\w*)\s*[:(]", re.MULTILINE)
+
+_TEST_AGENT_SYSTEM = """You are an expert Python test engineer.
+Given source code, write comprehensive pytest tests that cover:
+- Happy path (normal inputs)
+- Edge cases (empty, None, zero, large values)
+- Error cases (invalid input raises the right exception)
+
+Rules:
+- Use pytest fixtures when appropriate
+- Mock external calls (HTTP, DB, filesystem) with unittest.mock
+- Each test function name must start with test_
+- Output ONLY the test file content — no explanation
+- Use fenced code block: ```python\\n<code>\\n```
+"""
+
+_TEST_SYSTEM_PROMPT = """You are an expert Python test engineer specializing in pytest.
+Write comprehensive tests covering happy paths, edge cases, and error conditions.
+Use unittest.mock for external dependencies. Output only pytest code."""
+
+
+def _run_pytest(test_file: Path, base_dir: Path) -> str:
+    """Ejecuta pytest en un archivo y retorna un resumen compacto."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["python", "-m", "pytest", str(test_file), "-v", "--tb=short", "--no-header"],
+            capture_output=True, text=True, timeout=60, cwd=base_dir,
+        )
+        output = (result.stdout + result.stderr).strip()
+        # Extraer solo el resumen final (línea con passed/failed)
+        lines = output.splitlines()
+        summary_lines = [l for l in lines if re.search(r"\d+\s+(passed|failed|error)", l)]
+        summary = summary_lines[-1] if summary_lines else output[-300:]
+        status = "✓" if result.returncode == 0 else "✗"
+        return f"{status} pytest {test_file.name}: {summary}"
+    except FileNotFoundError:
+        return "(pytest no instalado — ejecuta: pip install pytest)"
+    except subprocess.TimeoutExpired:
+        return "⚠ pytest timeout (60s)"
+    except Exception as e:
+        return f"⚠ Error ejecutando pytest: {e}"
+
+
+def generar_tests(code: str, source_path: Path, base_dir: Path,
+                  run: bool = True) -> str:
+    """
+    Genera tests pytest para el código dado usando el agente code-reviewer.
+    Escribe tests/test_<name>.py y opcionalmente ejecuta pytest.
+    Retorna resumen de tests generados y resultados.
+    """
+    _load_agents()
+    agent = (_agent_cache.get("engineering-code-reviewer")
+             or find_agent("code reviewer")
+             or find_agent("backend architect"))
+    if not agent:
+        return "(agente de tests no disponible)"
+
+    funcs   = _PY_FUNC_RE.findall(code)
+    classes = _PY_CLASS_RE.findall(code)
+    symbols = funcs + classes
+    if not symbols:
+        return "(no se encontraron funciones/clases para testear)"
+
+    log.info("[Tests] Generando tests para: %s", ", ".join(symbols[:5]))
+
+    module_name = source_path.stem
+    prompt = (
+        f"Generate pytest tests for the following Python module `{module_name}.py`.\n"
+        f"Functions/classes to test: {', '.join(symbols)}\n\n"
+        f"Source code:\n```python\n{code[:6000]}\n```\n\n"
+        f"Write tests in a file named `test_{module_name}.py`.\n"
+        f"Import the module as: `from {module_name} import *` or with the correct path.\n"
+        f"Output ONLY the complete test file inside a fenced ```python block."
+    )
+
+    system = _TEST_SYSTEM_PROMPT
+    resp = _call_groq(system, prompt, model="llama-3.3-70b-versatile")
+    if not resp:
+        for m in _OR_TEXT_MODELS:
+            resp = _call_openrouter(system, prompt, model=m)
+            if resp:
+                break
+    if not resp:
+        return "(sin conexión LLM para generar tests)"
+
+    # Extraer bloque python de la respuesta
+    blocks = _extract_code_blocks(resp)
+    py_blocks = [(l, c) for l, c in blocks if l in ("python", "python3")]
+    if not py_blocks:
+        return f"(el agente no generó código de tests válido)\n{resp[:300]}"
+
+    test_code = py_blocks[0][1].strip()
+
+    # Escribir en tests/test_<module>.py
+    tests_dir = base_dir / "tests"
+    tests_dir.mkdir(exist_ok=True)
+
+    # Crear __init__.py si no existe
+    init = tests_dir / "__init__.py"
+    if not init.exists():
+        init.write_text("", encoding="utf-8")
+
+    test_file = tests_dir / f"test_{module_name}.py"
+    print(f"\n── [TEST GEN] {test_file.relative_to(base_dir)} ──────────────────")
+    print(test_code[:600] + ("\n[...]" if len(test_code) > 600 else ""))
+    test_file.write_text(test_code, encoding="utf-8")
+
+    result_str = f"✓ Tests generados: {test_file.relative_to(base_dir)}"
+    if run:
+        pytest_result = _run_pytest(test_file, base_dir)
+        result_str += f"\n{pytest_result}"
+
+    return result_str
+
+
 def _color_diff(dest: Path, new_content: str) -> str:
     """
     Genera un diff unificado coloreado entre el contenido actual del archivo
@@ -477,6 +596,23 @@ def _write_project_files(files: list[tuple[str, str]], base_dir: Path) -> list[s
 
         dest.write_text(new_content, encoding="utf-8")
         created.append(str(dest.relative_to(base_dir)))
+
+    # Generar tests automáticos para archivos Python si NOVA_AUTO_TESTS=1
+    if os.getenv("NOVA_AUTO_TESTS", "0") == "1":
+        for rel in created:
+            p = base_dir / rel
+            if p.suffix == ".py" and not p.stem.startswith("test_") and p.parent.name != "tests":
+                try:
+                    code = p.read_text(encoding="utf-8", errors="replace")
+                    if _PY_FUNC_RE.search(code):   # solo si tiene funciones
+                        test_res = generar_tests(code, p, base_dir, run=True)
+                        log.info("[Tests] %s → %s", rel, test_res[:80])
+                        if created:  # añadir el test file a la lista si se creó
+                            tf = base_dir / "tests" / f"test_{p.stem}.py"
+                            if tf.exists():
+                                created.append(str(tf.relative_to(base_dir)))
+                except Exception as e:
+                    log.warning("[Tests] Error generando tests para %s: %s", rel, e)
 
     return created
 

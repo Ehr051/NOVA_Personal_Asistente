@@ -2097,6 +2097,7 @@ try:
         codear_con_docs as _codear_con_docs,
         _DOC_SEARCH_RE as _SPEC_DOC_RE,
         _CODE_KEYWORDS as _SPEC_CODE_KW,
+        generar_tests as _generar_tests,
     )
     _HAS_SPECIALIST = True
 except ImportError:
@@ -2370,6 +2371,46 @@ def skill_editar_proyecto(texto: str) -> str:
 
     created = _write_project_files(files, base)
     return f"✓ Archivos actualizados en {base.name}:\n" + "\n".join(f"  • {f}" for f in created)
+
+
+def skill_generar_tests(texto: str) -> str:
+    """
+    Genera tests pytest para un archivo del proyecto activo.
+    Ej: 'genera tests para src/monitor.py'
+    Ej: 'testea el archivo utils.py'
+    """
+    if not _HAS_SPECIALIST:
+        return "Módulo de especialistas no disponible."
+    if not _proyecto_activo:
+        return "No hay proyecto activo. Usa 'abre proyecto [ruta]' primero."
+
+    base = _proyecto_activo["path"]
+
+    # Detectar archivo objetivo
+    m = re.search(r"([\w./\-]+\.py)", texto)
+    if m:
+        target = base / m.group(1).strip()
+        if not target.exists():
+            # Buscar sin prefijo de directorio
+            matches = list(base.rglob(m.group(1).strip()))
+            target = matches[0] if matches else None
+    else:
+        # Sin archivo específico: testear todos los .py modificados recientemente
+        import subprocess
+        result = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD"],
+            cwd=base, capture_output=True, text=True
+        )
+        py_files = [base / f.strip() for f in result.stdout.splitlines()
+                    if f.strip().endswith(".py") and not "test_" in f]
+        target = py_files[0] if py_files else None
+
+    if not target or not target.exists():
+        return f"No encontré archivo Python para testear en {base.name}."
+
+    code = target.read_text(encoding="utf-8", errors="replace")
+    result = _generar_tests(code, target, base, run=True)
+    return f"Tests para {target.relative_to(base)}:\n{result}"
 
 
 def skill_codear_con_docs(texto: str) -> str:
@@ -3480,6 +3521,10 @@ _INTENTS: list[tuple] = [
                                                                               skill_mejorar_proyecto, 0),
     (r"(?:c[oó]mo\s+(?:se\s+)?(?:implementa[r]?|usa[r]?|hago?|creo?|configuro?|integro?)|"
      r"ejemplo\s+de|c[oó]mo\s+funciona|qu[eé]\s+es)\s+.{5,}",              skill_codear_con_docs, 0),
+    (r"(?:genera(?:r)?|crea(?:r)?|escribe(?:r)?|haz?)\s+(?:los?\s+)?tests?\s+(?:para\s+|de\s+)?",
+                                                                              skill_generar_tests, 0),
+    (r"(?:testea(?:r)?|prueba(?:r)?)\s+(?:el\s+archivo\s+)?[\w./\-]+\.py",
+                                                                              skill_generar_tests, 0),
     (r"(?:qué\s+misiones|que\s+misiones|cómo\s+mejorar[ías]*|como\s+mejorar[ías]*|"
      r"propone[s]?\s+misiones?|planea[r]?\s+misiones?|analiza[r]?\s+proyecto|"
      r"misiones?\s+para|mejoras?\s+para|qué\s+har[ías]*|que\s+har[ías]*).{0,120}",
@@ -4222,6 +4267,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_mejorar_proyecto, "text"),
     "codear_con_docs":  ("Buscar documentación real en la web y generar código con un especialista",
                         skill_codear_con_docs, "text"),
+    "generar_tests":    ("Generar tests pytest para un archivo del proyecto activo y ejecutarlos",
+                        skill_generar_tests, "text"),
     "planear_misiones": ("Analizar el proyecto y proponer misiones de mejora con agentes especializados",
                         skill_planear_misiones, "text"),
     "ejecutar_misiones": ("Ejecutar las misiones propuestas (todas o seleccionadas por número)",
