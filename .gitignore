@@ -1,0 +1,52 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+~/NovaOutput/
+
+# Screenshots y capturas de auditoría (no van al repo)
+*.jpeg
+*.jpg
+*.gif
+*.webp
+*.png
+.playwright-mcp/
+
+# Excepciones: assets del proyecto sí van al repo
+!assets/*.png
+!assets/*.ico
+
+# Claude Code config local (no debe committearse)
+.claude/
+
+# Datos efímeros del runtime y datos personales
+temp_buffer.wav
+nova_voice_profile.npy
+model_stats.json
+calibracion_matriz.npy
+__pycache__
+*.log
+*.npy
+*.sqlite
+*.db
+
+# Base de datos Qdrant y memoria local
+__DOTNOVA_PATH__/
+.nova/
+qdrant_db/
+qdrant.lock
+
+# Código legado - no incluir en repositorio principal
+src/nova/legacy/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
+
+# Pruebas locales - no incluir en repositorio principal
+tests/
+
+# seguimiento de workflow locales - no incluir en repositorio principal
+*/workflow.md

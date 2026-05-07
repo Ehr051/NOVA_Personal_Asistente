@@ -159,11 +159,30 @@ def check_env_file() -> bool:
 
 # ─── Instalación ─────────────────────────────────────────────────────────────
 
-def pip_install(packages: list[str]) -> bool:
+def pip_install(packages: list[str], optional: bool = False) -> bool:
     if not packages:
         return True
+
+    # En Windows, PyAudio requiere compilación — intentar wheel precompilado
+    if PLATFORM == "windows" and "PyAudio" in packages:
+        warn("PyAudio requiere compilación en Windows. Intentando wheel precompilado...")
+        packages = [p for p in packages if p != "PyAudio"]
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "--only-binary", ":all:", "PyAudio"],
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                warn("No se pudo instalar PyAudio precompilado — se usará sounddevice.")
+        except Exception:
+            pass
+
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *packages]
     result = subprocess.run(cmd)
+
+    if result.returncode != 0 and optional:
+        warn("Algunas dependencias opcionales fallaron (se usarán alternativas)")
+        return True
     return result.returncode == 0
 
 
@@ -183,10 +202,17 @@ def install_all() -> None:
     if plat_deps:
         header(f"Dependencias {PLATFORM.upper()}")
         info(f"Instalando {len(plat_deps)} paquetes específicos...")
-        if pip_install(plat_deps):
+        if pip_install(plat_deps, optional=True):
             ok(f"Dependencias {PLATFORM} instaladas")
         else:
             warn(f"Algunas dependencias {PLATFORM} fallaron (pueden ser opcionales)")
+
+    # 2b. Dependencias opcionales (PyAudio como fallback de audio)
+    opt_deps = OPTIONAL_AUDIO.get(PLATFORM, [])
+    if opt_deps:
+        header("Dependencias opcionales de audio")
+        info(f"Intentando instalar {len(opt_deps)} paquetes opcionales...")
+        pip_install(opt_deps, optional=True)
 
     # 3. Deps de sistema
     check_system_deps()
@@ -198,6 +224,17 @@ def install_all() -> None:
     # 5. Ollama (opcional)
     header("Dependencias opcionales")
     check_ollama()
+
+    # 6. Post-install pywin32 en Windows
+    if PLATFORM == "windows":
+        try:
+            info("Ejecutando post-install de pywin32...")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "pywin32"],
+                capture_output=False,
+            )
+        except Exception:
+            pass
 
     # ── Crear lanzador en el escritorio ─────────────────────────────────────
     create_desktop_launcher()
@@ -230,7 +267,7 @@ def check_only() -> None:
 
     # Verificar imports críticos
     header("Módulos Python")
-    critical = ["openai", "speech_recognition", "pyaudio", "dotenv", "edge_tts"]
+    critical = ["openai", "speech_recognition", "dotenv", "edge_tts"]
     for mod in critical:
         try:
             __import__(mod)
