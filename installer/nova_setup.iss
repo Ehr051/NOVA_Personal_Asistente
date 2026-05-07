@@ -30,8 +30,8 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon";    Description: "Crear acceso directo en el Escritorio"; GroupDescription: "Iconos adicionales:"; Flags: checked
-Name: "addtopath";      Description: "Agregar 'nova' al PATH del sistema (comando en consola)"; GroupDescription: "Opciones:"; Flags: checked
+Name: "desktopicon";    Description: "Crear acceso directo en el Escritorio"; GroupDescription: "Iconos adicionales:"
+Name: "addtopath";      Description: "Agregar 'nova' al PATH del sistema (comando en consola)"; GroupDescription: "Opciones:"
 
 [Files]
 Source: "..\dist\Nova\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
