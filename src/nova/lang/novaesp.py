@@ -160,7 +160,7 @@ REQUIRE_WAKE_WORD   = os.getenv("REQUIRE_WAKE_WORD", "1").strip() != "0"
 
 # ─── TTS con barge-in ────────────────────────────────────────────────────────
 
-BARGE_IN_THRESHOLD = int(os.getenv("BARGE_IN_THRESHOLD", "600"))
+BARGE_IN_THRESHOLD = float(os.getenv("BARGE_IN_THRESHOLD", "600"))
 
 _say_proc: subprocess.Popen | None = None   # proceso activo (say o afplay)
 _tmp_audio: str | None = None               # archivo mp3 temporal de edge-tts
