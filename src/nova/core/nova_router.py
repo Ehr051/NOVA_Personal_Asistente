@@ -28,6 +28,7 @@ Configuración (.env):
 
 from __future__ import annotations
 
+import logging
 import os
 import json
 import time
@@ -40,6 +41,8 @@ from collections import defaultdict
 
 from dotenv import load_dotenv
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 try:
     import anthropic as _anthropic_sdk
@@ -457,7 +460,7 @@ class NovaRouter:
             )
             self._ollama_ready = True
             self._active_provider = "Ollama"
-            print(f"  [Router] Ollama detectado con {sum(len(v) for v in self._ollama_models.values())} modelos")
+            logger.info("[Router] Ollama detectado con %d modelos", sum(len(v) for v in self._ollama_models.values()))
 
         # ── OpenClaw ────────────────────────────────────────
         self._openclaw_agent_model = os.getenv(
@@ -477,7 +480,7 @@ class NovaRouter:
             if self._openclaw_ready:
                 self._append_active_provider("OpenClaw")
             else:
-                print("  [Router] OpenClaw detectado pero /v1 no disponible (se omite).")
+                logger.warning("[Router] OpenClaw detectado pero /v1 no disponible (se omite).")
 
         # ── Groq ─────────────────────────────────────────────
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -562,8 +565,8 @@ class NovaRouter:
         )
         self.system_prompt = os.getenv("SYSTEM_PROMPT", SYSTEM_PROMPT_DEFAULT)
 
-        print(f"  [Router] Proveedores activos: {self._active_provider}")
-        print(f"  [Router] Orden de fallback: {', '.join(self.provider_order)}")
+        logger.info("[Router] Proveedores activos: %s", self._active_provider)
+        logger.info("[Router] Orden de fallback: %s", ", ".join(self.provider_order))
 
     # ── API pública ───────────────────────────────────────────────────────────
 
@@ -666,7 +669,7 @@ class NovaRouter:
                 data = json.loads(resp.read())
                 return data.get("response", "").strip() or None
         except Exception as exc:
-            print(f"  [ollama native vision] {model}: {str(exc)[:60]}")
+            logger.debug("[ollama native vision] %s: %s", model, str(exc)[:60])
             return None
         finally:
             if scaled != image_path:
@@ -705,13 +708,13 @@ class NovaRouter:
             for vision_model in OLLAMA_VISION_MODELS:
                 if vision_model not in all_local:
                     continue
-                print(f"  [vision] Intentando Ollama local: {vision_model}")
+                logger.debug("[vision] Intentando Ollama local: %s", vision_model)
                 result = self._vision_query_ollama_native(
                     model=vision_model, prompt=prompt,
                     image_path=image_path, max_tokens=max_tokens, timeout=75,
                 )
                 if result:
-                    print(f"  [vision OK] Ollama/{vision_model}")
+                    logger.info("[vision OK] Ollama/%s", vision_model)
                     return result
 
         # ── 2. OpenRouter — Gemma 4 con visión (cloud, gratis) ──────────────
@@ -737,11 +740,11 @@ class NovaRouter:
                             max_tokens=max_tokens, temperature=0.2,
                         )
                         self.stats_tracker.record_success(vision_model, time.time() - t0)
-                        print(f"  [vision OK] OpenRouter/{vision_model} en {time.time()-t0:.1f}s")
+                        logger.info("[vision OK] OpenRouter/%s en %.1fs", vision_model, time.time()-t0)
                         return text
                     except Exception as exc:
                         self.stats_tracker.record_fail(vision_model)
-                        print(f"  [vision fallback] OpenRouter/{vision_model}: {str(exc)[:60]}")
+                        logger.debug("[vision fallback] OpenRouter/%s: %s", vision_model, str(exc)[:60])
             finally:
                 if scaled != image_path:
                     try:
@@ -825,13 +828,13 @@ class NovaRouter:
                         if not any(model in lst for lst in available.values()):
                             model_lower = model.lower()
                             if any(s in model_lower for s in _EMBEDDING_SUFFIXES):
-                                print(f"  [Router] Modelo de embeddings ignorado en chat: {model}")
+                                logger.debug("[Router] Modelo de embeddings ignorado en chat: %s", model)
                                 continue
                             available[2].append(model)
 
                     OLLAMA_AVAILABLE_MODELS = available
         except Exception as e:
-            print(f"  [Router] Ollama no detectado o error: {e}")
+            logger.debug("[Router] Ollama no detectado o error: %s", e)
 
         return available
 
@@ -1089,7 +1092,7 @@ class NovaRouter:
             except Exception as exc:
                 latency = time.time() - start_time
                 self.stats_tracker.record_fail(attempt["billing_model"])
-                print(f"  [fallback] {attempt['provider']}/{attempt['display_model']}: {str(exc)[:70]}")
+                logger.debug("[fallback] %s/%s: %s", attempt['provider'], attempt['display_model'], str(exc)[:70])
                 last_error = exc
 
         raise RuntimeError(f"Todos los modelos fallaron. Último error: {last_error}")

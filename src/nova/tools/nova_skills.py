@@ -1562,7 +1562,7 @@ def computer_pilot_mode(goal: str) -> str:
     import time
     if _notify_cb:
         _notify_cb(f"Empezando piloto automático para: {goal}")
-    print(f"\n🚀 [AUTOPILOTO] Misión: '{goal}'")
+    log.info("[AUTOPILOTO] Misión: %s", goal)
     
     sys_override = (
         "You are an autonomous computer operator with vision. "
@@ -1585,7 +1585,7 @@ def computer_pilot_mode(goal: str) -> str:
         
         # Consultar al cerebro visual
         reply = _router.vision_query("What next?", clean_path, system_override=sys_override).strip()
-        print(f"🤖 [AUTOPILOTO] Decisión: {reply}")
+        log.debug("[AUTOPILOTO] Decisión: %s", reply[:120])
         
         # Ejecutar acción
         if reply.startswith("CLICK"):
@@ -1616,7 +1616,7 @@ def computer_pilot_mode(goal: str) -> str:
 
 def set_timer(seconds: int, label: str = "Temporizador") -> str:
     def _ring():
-        print(f"\n⏰ [{label}] ¡Tiempo cumplido, Señor!")
+        log.info("[AUTOPILOTO] Tiempo cumplido: %s", label)
         _active_timers.pop(label, None)
         if _notify_cb:
             _notify_cb(f"Señor, el tiempo del {label} ha terminado.")
@@ -2433,9 +2433,9 @@ def skill_mejorar_proyecto(texto: str = "") -> str:
                  "tarea": "Mejora la documentación y el README."},
             ]
 
-    print(f"[Nova] Lanzando {len(tareas)} agentes en paralelo sobre '{base.name}'...")
+    log.info("[Orquestador] Lanzando %d agentes sobre '%s'", len(tareas), base.name)
     for t in tareas:
-        print(f"  → [{t['label']}] {t['agente']}: {t['tarea'][:60]}...")
+        log.debug("  → [%s] %s: %s", t['label'], t['agente'], t['tarea'][:60])
 
     return _mejorar_paralelo(base, tareas)
 
@@ -2464,7 +2464,7 @@ def skill_planear_misiones(texto: str = "") -> str:
     # Quitar "proyecto" al inicio si quedó
     foco = re.sub(r"^proyecto\s+", "", foco, flags=re.I).strip()
 
-    print(f"[Nova] Analizando proyecto '{base.name}' para proponer misiones...")
+    log.info("[Orquestador] Analizando proyecto '%s' para proponer misiones", base.name)
     misiones = _planear_mejoras(base, foco=foco)
 
     global _misiones_pendientes
@@ -2504,9 +2504,9 @@ def skill_ejecutar_misiones(texto: str = "") -> str:
         )
 
     tareas = [_misiones_pendientes[i] for i in seleccion]
-    print(f"[Nova] Ejecutando {len(tareas)} misión(es) en paralelo sobre '{base.name}'...")
+    log.info("[Orquestador] Ejecutando %d misión(es) sobre '%s'", len(tareas), base.name)
     for t in tareas:
-        print(f"  → [{t.get('label', '?')}] {t.get('agente', '?')}: {t.get('tarea', '')[:70]}...")
+        log.debug('  → [%s] %s: %s', t.get('label','?'), t.get('agente','?'), t.get('tarea','')[:70])
 
     resultado = _mejorar_paralelo(base, tareas)
 

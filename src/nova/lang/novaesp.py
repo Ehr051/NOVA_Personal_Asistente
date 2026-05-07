@@ -1003,6 +1003,14 @@ def main() -> None:
     # Compartir stop_event con el HUD para que cierre Qt al salir
     hud.set_stop_event(stop_event)
 
+    # Servidor Telegram Receive en background (polling directo si hay token)
+    try:
+        from nova.connectors.nova_telegram_server import start as _tg_start
+        from nova.cli.repl import _route_to_llm as _tg_process
+        _tg_start(process_fn=_tg_process)
+    except Exception:
+        pass
+
     # Audio loop en hilo background (daemon → muere si el HUD cierra)
     audio_thread = threading.Thread(
         target=_nova_loop,

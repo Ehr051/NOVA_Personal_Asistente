@@ -51,4 +51,4 @@ tests/__pycache__/
 tests/model_stats.json
 
 # seguimiento de workflow locales - no incluir en repositorio principal
-*/workflow.md
+# (docs/WORKFLOW.md sí se trackea — es el tablero público del proyecto)
