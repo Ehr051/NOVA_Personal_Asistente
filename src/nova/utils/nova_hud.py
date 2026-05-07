@@ -19,7 +19,7 @@ from PyQt5.QtGui     import QColor, QTextCursor
 # ─── Dimensiones base (escala 1.0) ──────────────────────────────────────────
 W_BASE       = 280
 H_ANIM_BASE  = 320
-H_METRICS    = 16
+H_METRICS    = 30
 H_STRIP      = 18
 H_LOG_MIN    = 80
 H_LOG_MAX    = 500
@@ -458,12 +458,23 @@ _SS_CHEVRON = f"""
 """
 _SS_METRICS = f"""
     QLabel {{
-        background: rgba(0,8,20,160);
-        color: rgba(20,180,200,160);
+        background: rgba(0,8,20,175);
+        color: rgba(20,180,200,180);
         border-top: 1px solid {_STYLE_BORDER};
         font-family: 'Courier New', monospace;
-        font-size: 9px;
-        padding: 0px 6px;
+        font-size: 8px;
+        padding: 2px 6px;
+    }}
+"""
+_SS_ATTACH_BADGE = f"""
+    QLabel {{
+        background: rgba(0,60,30,200);
+        color: rgba(80,255,140,220);
+        border: 1px solid rgba(40,200,100,120);
+        border-radius: 3px;
+        font-family: 'Courier New', monospace;
+        font-size: 8px;
+        padding: 1px 5px;
     }}
 """
 
@@ -492,6 +503,16 @@ class NovaWindow(QWidget):
         self._resizing_log  = False
         self._resize_start_y = 0
         self._resize_start_h = 0
+
+        # Estado de modelos / sesión
+        self._session_tokens  = 0
+        self._last_model      = "—"
+        self._last_provider   = "—"
+        self._last_budget_pct = 100.0
+        self._call_count      = 0
+
+        # Archivo pendiente para adjuntar al próximo mensaje
+        self._pending_attachment: dict | None = None   # {"name", "type", "content"}
 
         self.setMouseTracking(True)
         self._setup_window()
@@ -555,11 +576,35 @@ class NovaWindow(QWidget):
 
         self._strip.mousePressEvent = lambda e: self._toggle_panel()
 
-    def _update_metrics(self, tokens: int, provider: str, budget_pct: float):
+    def _update_metrics(self, tokens: int = 0, provider: str = "", budget_pct: float = -1,
+                        model: str = ""):
         """Actualiza la barra de métricas con datos del último LLM call."""
-        budget_icon = "●" if budget_pct > 30 else "▲" if budget_pct > 10 else "▼"
-        text = f"tk:{tokens:,} · {provider} · {budget_icon}{budget_pct:.0f}%"
-        self._metrics_bar.setText(text)
+        if tokens:
+            self._session_tokens += tokens
+            self._call_count     += 1
+        if provider:
+            self._last_provider = provider[:14]
+        if budget_pct >= 0:
+            self._last_budget_pct = budget_pct
+        if model:
+            # Acortar: "llama-3.3-70b-versatile" → "llama3.3-70b"
+            m = model.replace("llama-", "llama").replace("-versatile", "").replace("-instant", "ᵢ")
+            m = m.replace("-preview", "ₚ").replace(":free", "").replace("google/", "")
+            self._last_model = m[:18]
+
+        budget_icon = "●" if self._last_budget_pct > 30 else "▲" if self._last_budget_pct > 10 else "▼"
+        line1 = f"▸ {self._last_model:<18}  {self._last_provider}"
+        line2 = (f"  tk última: {tokens:,}  sesión: {self._session_tokens:,}  "
+                 f"{budget_icon}{self._last_budget_pct:.0f}%  [{self._call_count} calls]")
+        self._metrics_bar.setText(f"{line1}\n{line2}")
+        self._metrics_bar.setToolTip(
+            f"Modelo: {model or self._last_model}\n"
+            f"Proveedor: {self._last_provider}\n"
+            f"Tokens esta llamada: {tokens:,}\n"
+            f"Total sesión: {self._session_tokens:,}\n"
+            f"Llamadas: {self._call_count}\n"
+            f"Budget restante: {self._last_budget_pct:.1f}%"
+        )
 
     # ── Escala y layout dinámico ──────────────────────────────────────────────
 
@@ -599,7 +644,10 @@ class NovaWindow(QWidget):
         self._log.setGeometry(pad, y0 + pad, w - pad*2, d["h_log"])
         y_in = y0 + pad + d["h_log"] + max(3, int(6*s))
         btn_w = max(20, int(32*s))
-        self._input.setGeometry(pad, y_in, w - btn_w*2 - pad*2, d["h_inp"])
+        badge_h = max(14, int(16*s))
+        self._attach_badge.setGeometry(pad, y_in - badge_h - 2, w - pad*2, badge_h)
+        self._input.setGeometry(pad, y_in, w - btn_w*3 - pad*2, d["h_inp"])
+        self._attach_btn.setGeometry(w - btn_w*3, y_in, d["h_inp"], d["h_inp"])
         self._send_btn.setGeometry(w - btn_w*2, y_in, d["h_inp"], d["h_inp"])
         self._close_btn.setGeometry(w - btn_w, y_in, d["h_inp"], d["h_inp"])
 
@@ -636,6 +684,13 @@ class NovaWindow(QWidget):
         self._input.returnPressed.connect(self._on_text_submit)
         self._input.hide()
 
+        self._attach_btn = QPushButton("📎", self)
+        self._attach_btn.setGeometry(d["w"] - 104, y_input, d["h_inp"], d["h_inp"])
+        self._attach_btn.setStyleSheet(_SS_BTN)
+        self._attach_btn.setToolTip("Adjuntar archivo (imagen, doc, código…)")
+        self._attach_btn.clicked.connect(self._on_attach_click)
+        self._attach_btn.hide()
+
         self._send_btn = QPushButton("→", self)
         self._send_btn.setGeometry(d["w"] - 70, y_input, d["h_inp"], d["h_inp"])
         self._send_btn.setStyleSheet(_SS_BTN)
@@ -649,23 +704,30 @@ class NovaWindow(QWidget):
         self._close_btn.clicked.connect(self._request_close)
         self._close_btn.hide()
 
+        # Badge que muestra el archivo adjunto pendiente (oculto por default)
+        self._attach_badge = QLabel("", self)
+        self._attach_badge.setGeometry(6, y_input - 18, d["w"] - 12, 16)
+        self._attach_badge.setStyleSheet(_SS_ATTACH_BADGE)
+        self._attach_badge.hide()
+
     # ── Toggle panel ─────────────────────────────────────────────────────────
 
     def _toggle_panel(self):
         self._panel_open = not self._panel_open
-        if self._panel_open:
-            self._log.show()
-            self._input.show()
-            self._send_btn.show()
-            self._close_btn.show()
+        visible = self._panel_open
+        self._log.setVisible(visible)
+        self._input.setVisible(visible)
+        self._attach_btn.setVisible(visible)
+        self._send_btn.setVisible(visible)
+        self._close_btn.setVisible(visible)
+        if visible:
             self._chevron.setText("▴")
             self._input.setFocus()
+            if self._pending_attachment:
+                self._attach_badge.show()
         else:
-            self._log.hide()
-            self._input.hide()
-            self._send_btn.hide()
-            self._close_btn.hide()
             self._chevron.setText("▾")
+            self._attach_badge.hide()
         self._relayout()
 
     # ── Log de conversación ───────────────────────────────────────────────────
@@ -691,15 +753,111 @@ class NovaWindow(QWidget):
 
     # ── Input de texto ────────────────────────────────────────────────────────
 
+    # ── Adjuntar archivos ─────────────────────────────────────────────────────
+
+    _TEXT_EXTS = {".txt", ".md", ".py", ".js", ".ts", ".jsx", ".tsx", ".json",
+                  ".yaml", ".yml", ".csv", ".html", ".css", ".xml", ".sh",
+                  ".bash", ".c", ".h", ".cpp", ".java", ".go", ".rs", ".sql",
+                  ".toml", ".ini", ".env", ".log", ".dockerfile"}
+    _IMG_EXTS  = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
+    def _on_attach_click(self):
+        from PyQt5.QtWidgets import QFileDialog
+        exts = ("Todos los soportados (*.txt *.md *.py *.js *.ts *.json *.yaml *.csv "
+                "*.html *.c *.h *.cpp *.java *.go *.rs *.sql *.pdf "
+                "*.png *.jpg *.jpeg *.webp *.gif);;"
+                "Texto / código (*.txt *.md *.py *.js *.ts *.json *.yaml *.csv *.html *.c *.h *.cpp *.java *.go);;"
+                "Imágenes (*.png *.jpg *.jpeg *.webp *.gif);;"
+                "PDF (*.pdf);;"
+                "Todos los archivos (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "Adjuntar archivo", "", exts)
+        if not path:
+            return
+        self._load_attachment(path)
+
+    def _load_attachment(self, path: str):
+        import os, base64
+        ext  = os.path.splitext(path)[1].lower()
+        name = os.path.basename(path)
+
+        if ext in self._IMG_EXTS:
+            with open(path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                    "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}.get(ext.lstrip("."), "image/png")
+            self._pending_attachment = {"name": name, "type": "image", "mime": mime, "content": b64}
+            self.add_log("📎", f"Imagen adjunta: {name}")
+
+        elif ext == ".pdf":
+            text = self._read_pdf(path)
+            self._pending_attachment = {"name": name, "type": "text", "content": text}
+            self.add_log("📎", f"PDF adjunto: {name} ({len(text):,} chars)")
+
+        elif ext in self._TEXT_EXTS or ext == "":
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read(20_000)   # máx 20k chars
+                self._pending_attachment = {"name": name, "type": "text", "content": content}
+                self.add_log("📎", f"Archivo adjunto: {name} ({len(content):,} chars)")
+            except Exception as e:
+                self.add_log("⚠", f"No pude leer {name}: {e}")
+                return
+        else:
+            self.add_log("⚠", f"Formato no soportado: {ext}")
+            return
+
+        # Mostrar badge con nombre del archivo
+        self._attach_badge.setText(f"📎 {name}  ✕ clic para quitar")
+        self._attach_badge.show()
+        self._attach_badge.mousePressEvent = lambda _: self._clear_attachment()
+
+    def _clear_attachment(self):
+        self._pending_attachment = None
+        self._attach_badge.hide()
+
+    @staticmethod
+    def _read_pdf(path: str) -> str:
+        try:
+            import pdfminer.high_level
+            return pdfminer.high_level.extract_text(path)[:20_000]
+        except ImportError:
+            pass
+        try:
+            import pypdf
+            r = pypdf.PdfReader(path)
+            return "\n".join(p.extract_text() or "" for p in r.pages)[:20_000]
+        except ImportError:
+            return "(PDF: instala pdfminer.six o pypdf para leer PDFs)"
+        except Exception as e:
+            return f"(PDF error: {e})"
+
+    # ── Input de texto ────────────────────────────────────────────────────────
+
     def _on_text_submit(self):
         text = self._input.text().strip()
-        if not text:
+        if not text and not self._pending_attachment:
             return
         self._input.clear()
-        self.add_log("Tú", text)
+
+        attachment = self._pending_attachment
+        self._clear_attachment()
+
+        # Construir mensaje final con adjunto si hay
+        if attachment and attachment["type"] == "text":
+            full = f"[Archivo adjunto: {attachment['name']}]\n{attachment['content']}\n---\n{text}" if text else f"[Archivo adjunto: {attachment['name']}]\n{attachment['content']}"
+        elif attachment and attachment["type"] == "image":
+            # Protocolo especial — novaesp.py lo intercepta
+            full = f"__HUD_IMG__:{attachment['name']}:{attachment['mime']}:{attachment['content']}"
+            if text:
+                full += f"::{text}"
+        else:
+            full = text
+
+        if text:
+            self.add_log("Tú", text)
         if self._text_callback:
             import threading
-            threading.Thread(target=self._text_callback, args=(text,), daemon=True).start()
+            threading.Thread(target=self._text_callback, args=(full,), daemon=True).start()
 
     def set_text_callback(self, fn):
         self._text_callback = fn
@@ -844,12 +1002,19 @@ class NovaWindow(QWidget):
                 self.add_log("Nova", state["response_text"])
             if "user_text" in state and state["user_text"]:
                 self.add_log("Tú", state["user_text"])
-            # Métricas del LLM (tokens, proveedor, budget)
-            if "tokens_used" in state or "provider" in state:
+            # Métricas del LLM (modelo, tokens, proveedor, budget)
+            if any(k in state for k in ("tokens_used", "provider", "model_info")):
                 tokens   = state.get("tokens_used", 0)
-                provider = state.get("provider", "—")[:10]
-                budget   = state.get("budget_remaining_pct", 100.0)
-                self._update_metrics(tokens, provider, budget)
+                provider = state.get("provider", "")
+                budget   = state.get("budget_remaining_pct", -1)
+                # Extraer nombre de modelo de model_info "Tier N label | model | N tk"
+                model = ""
+                mi = state.get("model_info", "")
+                if mi and "|" in mi:
+                    parts = [p.strip() for p in mi.split("|")]
+                    model = parts[1] if len(parts) > 1 else ""
+                self._update_metrics(tokens=tokens, provider=provider,
+                                     budget_pct=budget, model=model)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

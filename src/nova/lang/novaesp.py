@@ -724,7 +724,42 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             speak("A sus órdenes, Señor.", hud)
             return
 
-        print(f"\nTú [texto]: {text}")
+        # ── Imagen adjunta desde el HUD (📎 botón) ───────────────────────────
+        if text.startswith("__HUD_IMG__:"):
+            # Formato: __HUD_IMG__:filename:mime:b64data[::caption]
+            try:
+                parts = text[len("__HUD_IMG__:"):].split(":", 3)
+                fname, mime, b64 = parts[0], parts[1], parts[2]
+                caption = parts[3].lstrip(":").strip() if len(parts) > 3 else "¿Qué ves en esta imagen?"
+                hud.put_state(status="THINKING", user_text=f"[imagen: {fname}]")
+                data_url = f"data:{mime};base64,{b64}"
+                img_msg = {
+                    "role": "user",
+                    "content": [
+                        {"type": "text",      "text": caption},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ]
+                }
+                history.append(img_msg)
+                msgs   = _build_messages(history, router.system_prompt)
+                result = router.route(msgs)
+                resp   = result.get("response", "")
+                history.append({"role": "assistant", "content": resp})
+                if resp:
+                    speak(resp[:300], hud)
+                    hud.put_state(
+                        status="SPEAKING", response_text=resp,
+                        model_info=result.get("model_info", ""),
+                        tokens_used=result.get("tokens_used", 0),
+                        provider=result.get("provider", ""),
+                        budget_remaining_pct=result.get("budget_remaining_pct", 100.0),
+                    )
+            except Exception as e:
+                log.warning("[HUD] Error procesando imagen adjunta: %s", e)
+                speak("Tuve un problema procesando la imagen.", hud)
+            return
+
+        log.debug("Tú [texto]: %s", text[:80])
         hud.put_state(status="THINKING")   # user_text ya fue logueado por _on_text_submit
         nova_memory.save_turn("user", text)
         skill_resp = skills.dispatch(text)
