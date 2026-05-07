@@ -2094,6 +2094,9 @@ try:
         mejorar_proyecto_paralelo as _mejorar_paralelo,
         planear_mejoras_proyecto as _planear_mejoras,
         formatear_misiones as _formatear_misiones,
+        codear_con_docs as _codear_con_docs,
+        _DOC_SEARCH_RE as _SPEC_DOC_RE,
+        _CODE_KEYWORDS as _SPEC_CODE_KW,
     )
     _HAS_SPECIALIST = True
 except ImportError:
@@ -2367,6 +2370,30 @@ def skill_editar_proyecto(texto: str) -> str:
 
     created = _write_project_files(files, base)
     return f"✓ Archivos actualizados en {base.name}:\n" + "\n".join(f"  • {f}" for f in created)
+
+
+def skill_codear_con_docs(texto: str) -> str:
+    """
+    Busca documentación real en la web y genera código con un especialista.
+    Ej: '¿cómo implemento rate limiting en FastAPI?'
+    Ej: 'ejemplo de autenticación JWT con Django'
+    """
+    if not _HAS_SPECIALIST:
+        return "Módulo de especialistas no disponible."
+
+    # Detectar agente más apropiado según el framework mencionado
+    lower = texto.lower()
+    agente = "backend architect"
+    if any(k in lower for k in ("react", "vue", "angular", "nextjs", "css", "html", "frontend")):
+        agente = "frontend developer"
+    elif any(k in lower for k in ("pytorch", "tensorflow", "sklearn", "pandas", "numpy", "ml", "modelo")):
+        agente = "ai engineer"
+    elif any(k in lower for k in ("docker", "kubernetes", "terraform", "ci", "cd", "devops")):
+        agente = "devops automator"
+    elif any(k in lower for k in ("esp32", "arduino", "freertos", "firmware", "embedded")):
+        agente = "embedded firmware engineer"
+
+    return _codear_con_docs(texto, agente_query=agente)
 
 
 def skill_mejorar_proyecto(texto: str = "") -> str:
@@ -3451,6 +3478,8 @@ _INTENTS: list[tuple] = [
     (r"(?:estructura|árbol|arbol|archivos)\s+(?:del\s+)?proyecto",            skill_estructura_proyecto, 0),
     (r"(?:mejora(?:r)?|expande(?:r)?|itera(?:r)?)\s+(?:el\s+)?proyecto.{0,100}",
                                                                               skill_mejorar_proyecto, 0),
+    (r"(?:c[oó]mo\s+(?:se\s+)?(?:implementa[r]?|usa[r]?|hago?|creo?|configuro?|integro?)|"
+     r"ejemplo\s+de|c[oó]mo\s+funciona|qu[eé]\s+es)\s+.{5,}",              skill_codear_con_docs, 0),
     (r"(?:qué\s+misiones|que\s+misiones|cómo\s+mejorar[ías]*|como\s+mejorar[ías]*|"
      r"propone[s]?\s+misiones?|planea[r]?\s+misiones?|analiza[r]?\s+proyecto|"
      r"misiones?\s+para|mejoras?\s+para|qué\s+har[ías]*|que\s+har[ías]*).{0,120}",
@@ -4191,6 +4220,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_estructura_proyecto, None),
     "mejorar_proyecto": ("Lanzar múltiples agentes en paralelo para mejorar el proyecto activo",
                         skill_mejorar_proyecto, "text"),
+    "codear_con_docs":  ("Buscar documentación real en la web y generar código con un especialista",
+                        skill_codear_con_docs, "text"),
     "planear_misiones": ("Analizar el proyecto y proponer misiones de mejora con agentes especializados",
                         skill_planear_misiones, "text"),
     "ejecutar_misiones": ("Ejecutar las misiones propuestas (todas o seleccionadas por número)",

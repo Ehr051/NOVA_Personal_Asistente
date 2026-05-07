@@ -311,16 +311,31 @@ class NovaNeuroMemory:
             return f"Error recuperando memorias: {e}"
 
     # Métodos adicionales para compatibilidad con novaesp.py
+    _TRIVIAL = {"ok", "sí", "si", "no", "gracias", "bueno", "bien", "dale",
+                "claro", "listo", "perfecto", "entendido", "ya", "genial"}
+
     def save_turn(self, role: str, content: str) -> None:
-        """Guarda un turno de conversación."""
+        """Guarda un turno de conversación usando upsert directo (sin pipeline LLM de mem0)."""
+        stripped = content.strip()
+        if len(stripped) < 15 or stripped.lower().rstrip(".,!?") in self._TRIVIAL:
+            log.debug("[Memoria] Turno trivial omitido: %r", stripped[:30])
+            return
         if self._simple:
             self._simple.add(content, role)
         if not self.m: return
         try:
-            messages = [
-                {"role": role, "content": content},
-            ]
-            self.m.add(messages, user_id=self.user_id)
+            # Upsert directo: evita que mem0 llame al LLM con miles de tokens
+            embedding = self.m.embedding_model.embed(content[:2000])
+            vs = self.m.vector_store
+            from qdrant_client.models import PointStruct
+            point = PointStruct(
+                id=str(uuid.uuid4()),
+                vector=embedding,
+                payload={'text': content[:2000], 'user_id': self.user_id,
+                         'role': role, 'type': 'turn'}
+            )
+            vs.client.upsert(collection_name=vs.collection_name, points=[point])
+            log.debug("[Memoria] Turno '%s' guardado via upsert", role)
         except Exception as e:
             log.warning("[Memoria] Error guardando turno: %s", e)
 

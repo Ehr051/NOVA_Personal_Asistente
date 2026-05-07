@@ -21,6 +21,7 @@ import os
 # Add project root to sys.path to allow imports from nova package
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
+import logging
 import os
 import re
 import subprocess
@@ -29,6 +30,8 @@ import time
 import atexit
 import asyncio
 import tempfile
+
+log = logging.getLogger(__name__)
 
 # ─── Audio: audioop removido en Python 3.13 ──────────────────────────────────
 try:
@@ -62,7 +65,7 @@ except ImportError:
 # ─── Speaker verification (MFCC, sin cargar Whisper) ─────────────────────────
 
 _SPEAKER_PROFILE: "np.ndarray | None" = None
-_SPEAKER_THRESHOLD = float(os.getenv("SPEAKER_THRESHOLD", "0.80"))
+_SPEAKER_THRESHOLD = float(os.getenv("SPEAKER_THRESHOLD", "0.87"))
 _SPEAKER_VERIFY = False   # se activa si se carga un perfil
 
 def _load_speaker_profile() -> None:
@@ -81,11 +84,11 @@ def _load_speaker_profile() -> None:
                 import numpy as np
                 _SPEAKER_PROFILE = np.load(p)
                 _SPEAKER_VERIFY = True
-                print(f"  [Speaker] Perfil cargado: {os.path.basename(p)} — verificación ACTIVA (umbral={_SPEAKER_THRESHOLD})")
+                log.info("[Speaker] Perfil cargado: %s — verificación ACTIVA (umbral=%.2f)", os.path.basename(p), _SPEAKER_THRESHOLD)
                 return
             except Exception as e:
-                print(f"  [Speaker] Error cargando perfil: {e}")
-    print("  [Speaker] Sin perfil de voz — modo abierto (REQUIRE_WAKE_WORD sigue activo)")
+                log.warning("[Speaker] Error cargando perfil: %s", e)
+    log.info("[Speaker] Sin perfil de voz — wake word obligatoria (di '%s' para activar)", os.getenv("WAKE_WORD", "nova"))
 
 def _is_my_voice(wav_bytes: bytes) -> bool:
     """Verifica si el audio pertenece al usuario enrollado usando MFCC."""
@@ -107,7 +110,7 @@ def _is_my_voice(wav_bytes: bytes) -> bool:
         sim = float(np.dot(_SPEAKER_PROFILE, feats))
         return sim >= _SPEAKER_THRESHOLD
     except Exception as e:
-        print(f"  [Speaker] Error verificando voz: {e}")
+        log.warning("[Speaker] Error verificando voz: %s", e)
         return True   # falla segura → acepta
 
 # ─── Single instance lock ────────────────────────────────────────────────────
@@ -507,11 +510,11 @@ def listen(
         # "es" cubre todas las variantes del español (AR, ES, MX…)
         text = recognizer.recognize_google(audio, language="es")
     except sr.UnknownValueError:
-        print("  [no entendido]")
+        log.debug("[STT] audio capturado pero no reconocido (ruido/silencio)")
         hud.put_state(status="IDLE")
         return None
     except sr.RequestError as e:
-        print(f"  [error STT Google: {e}]")
+        log.warning("[STT] error Google: %s", e)
         hud.put_state(status="IDLE")
         return None
 
@@ -519,23 +522,21 @@ def listen(
         hud.put_state(status="THINKING", user_text=text)
         return text.strip()
 
-    # Con perfil de voz verificado → tratamos todo como comando directo (sin wake word)
+    # Con perfil de voz verificado → saltamos wake word (ya sabemos que es el usuario)
     if _SPEAKER_VERIFY:
         hud.put_state(status="THINKING", user_text=text)
         return text.strip()
 
+    # Sin perfil de voz: wake word SIEMPRE obligatoria para evitar activaciones por música/TV
     cmd = _extract_command(text)
 
     if cmd is None:
-        words = text.strip().split()
-        if context_active and len(words) >= 2:
+        # Excepción legítima: estamos en medio de una conversación activa
+        if context_active and len(text.strip().split()) >= 2:
             hud.put_state(status="THINKING", user_text=text)
             return text.strip()
-        if (not REQUIRE_WAKE_WORD) and _looks_like_direct_command(text):
-            hud.put_state(status="THINKING", user_text=text)
-            return text.strip()
-        # Sin wake word — mostrar lo oído para diagnóstico
-        print(f"  [ignorado] '{text}'")
+        # Sin wake word y sin perfil → ignorar siempre (aunque REQUIRE_WAKE_WORD=0)
+        log.debug("[STT] ignorado sin wake word (sin perfil de voz): '%s'", text[:50])
         hud.put_state(status="IDLE")
         return None
 

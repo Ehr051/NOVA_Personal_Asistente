@@ -250,6 +250,90 @@ def _run_blender_script(code: str) -> str:
         return f"(Error Blender: {e})"
 
 
+_ERROR_MARKERS = (
+    "Traceback (most recent call last)",
+    "SyntaxError:", "NameError:", "TypeError:", "ValueError:",
+    "ImportError:", "ModuleNotFoundError:", "AttributeError:",
+    "KeyError:", "IndexError:", "RuntimeError:", "OSError:",
+    "Exception:", "Error:",
+)
+
+
+def _has_execution_error(output: str) -> bool:
+    """Devuelve True si el output de ejecución contiene un error."""
+    if output.startswith("⚠"):
+        return True
+    return any(m in output for m in _ERROR_MARKERS)
+
+
+def ejecutar_con_feedback(agent: dict, task: str, max_iter: int = 3) -> str:
+    """
+    Invoca un agente, ejecuta su código y si falla lo pasa de vuelta
+    para auto-corrección. Máximo `max_iter` iteraciones.
+    """
+    name = agent["name"]
+    system = agent["system"]
+    hint = "\n\n(Always use fenced markdown code blocks for any code: ```lang\ncode\n```)"
+    current_task = task + hint
+    last_result = ""
+
+    for iteration in range(1, max_iter + 1):
+        # ── Llamar al LLM ────────────────────────────────────────────────────
+        resp = _call_groq(system, current_task, model="llama-3.3-70b-versatile")
+        if not resp:
+            for or_model in _OR_TEXT_MODELS:
+                resp = _call_openrouter(system, current_task, model=or_model)
+                if resp:
+                    break
+        if not resp:
+            return f"[{name}] Sin conexión al LLM. Verifica API keys."
+
+        # ── Ejecutar bloques de código ───────────────────────────────────────
+        blocks = _extract_code_blocks(resp)
+        if not blocks:
+            return f"[{name}]\n{resp}"
+
+        iter_label = f"(intento {iteration}/{max_iter})" if iteration > 1 else ""
+        parts = [f"[{name}]{' ' + iter_label if iter_label else ''}\n{resp}"]
+        error_context = ""
+        all_ok = True
+
+        for lang, code in blocks:
+            code = code.strip()
+            if not code:
+                continue
+            if "import bpy" in code or "bpy.ops" in code or "bpy.data" in code:
+                parts.append("\n▶ Enviando script a Blender...")
+                out = _run_blender_script(code)
+            else:
+                parts.append(f"\n▶ Ejecutando ({lang}):")
+                out = _run_code_block(lang, code)
+            parts.append(out)
+
+            if _has_execution_error(out):
+                all_ok = False
+                error_context += f"```{lang}\n{code}\n```\nError:\n{out[:800]}\n\n"
+
+        last_result = "\n".join(parts)
+
+        if all_ok:
+            log.debug("[Especialista] '%s' completado en %d intento(s)", name, iteration)
+            return last_result
+
+        if iteration < max_iter:
+            log.info("[Especialista] Error en iter %d/%d — reintentando con feedback", iteration, max_iter)
+            current_task = (
+                f"El código anterior falló. Corrige el error y devuelve solo el código corregido.\n\n"
+                f"Tarea original: {task}\n\n"
+                f"Código y error:\n{error_context}"
+                + hint
+            )
+        else:
+            last_result += f"\n\n⚠ Auto-corrección agotada ({max_iter} intentos)."
+
+    return last_result
+
+
 def _process_response(name: str, resp: str, auto_exec: bool = True) -> str:
     """
     Procesa la respuesta del agente:
@@ -318,20 +402,82 @@ def _strip_code_fence(content: str) -> str:
     return content
 
 
+def _color_diff(dest: Path, new_content: str) -> str:
+    """
+    Genera un diff unificado coloreado entre el contenido actual del archivo
+    y el nuevo contenido. Retorna string listo para imprimir en terminal.
+    Si el archivo no existe, muestra todo como añadido.
+    """
+    import difflib
+
+    GREEN  = "\033[92m"
+    RED    = "\033[91m"
+    CYAN   = "\033[96m"
+    RESET  = "\033[0m"
+
+    old_lines = dest.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True) if dest.exists() else []
+    new_lines = new_content.splitlines(keepends=True)
+
+    label_a = str(dest) if dest.exists() else "/dev/null"
+    diff = list(difflib.unified_diff(old_lines, new_lines,
+                                     fromfile=label_a, tofile=str(dest), lineterm=""))
+    if not diff:
+        return ""
+
+    colored = []
+    for line in diff:
+        if line.startswith("+++") or line.startswith("---"):
+            colored.append(f"{CYAN}{line}{RESET}")
+        elif line.startswith("@@"):
+            colored.append(f"{CYAN}{line}{RESET}")
+        elif line.startswith("+"):
+            colored.append(f"{GREEN}{line}{RESET}")
+        elif line.startswith("-"):
+            colored.append(f"{RED}{line}{RESET}")
+        else:
+            colored.append(line)
+    return "".join(colored)
+
+
 def _write_project_files(files: list[tuple[str, str]], base_dir: Path) -> list[str]:
-    """Escribe archivos al disco. Retorna lista de rutas creadas."""
+    """
+    Escribe archivos al disco mostrando diff coloreado antes de cada escritura.
+    Con NOVA_DIFF_CONFIRM=1 (y stdin TTY) pide confirmación por archivo.
+    Retorna lista de rutas creadas/modificadas.
+    """
+    import sys
+    confirm_mode = os.getenv("NOVA_DIFF_CONFIRM", "0") == "1" and sys.stdin.isatty()
     created = []
     dir_name = base_dir.name
+
     for rel_path, content in files:
         rel_path = rel_path.lstrip("/").replace("..", "")
-        # Si el LLM incluye el nombre del proyecto como primer segmento, eliminarlo
         parts = Path(rel_path).parts
         if parts and parts[0] == dir_name:
             rel_path = str(Path(*parts[1:])) if len(parts) > 1 else parts[0]
         dest = base_dir / rel_path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(_strip_code_fence(content), encoding="utf-8")
+
+        new_content = _strip_code_fence(content)
+        diff_output = _color_diff(dest, new_content)
+
+        if diff_output:
+            action = "NUEVO" if not dest.exists() else "MODIF"
+            print(f"\n── [{action}] {rel_path} {'─'*max(0, 50 - len(rel_path))}")
+            print(diff_output, end="")
+        else:
+            print(f"  (sin cambios) {rel_path}")
+            continue  # no reescribir si el contenido es idéntico
+
+        if confirm_mode:
+            resp = input("\n  ¿Aplicar este cambio? [S/n]: ").strip().lower()
+            if resp in ("n", "no"):
+                print("  → Omitido.")
+                continue
+
+        dest.write_text(new_content, encoding="utf-8")
         created.append(str(dest.relative_to(base_dir)))
+
     return created
 
 
@@ -456,28 +602,145 @@ def crear_proyecto(
 
 def invoke_specialist(agent: dict, task: str, auto_exec: bool = True) -> str:
     """
-    Invoca un agente especializado con una tarea.
-    Usa Groq primero (más rápido), OpenRouter como fallback.
-    Si la respuesta contiene código Python/bash, lo ejecuta automáticamente.
+    Invoca un agente especializado. Si auto_exec=True y la respuesta contiene
+    código ejecutable, usa el loop de feedback (hasta 3 correcciones automáticas).
     """
-    system = agent["system"]
+    if auto_exec:
+        return ejecutar_con_feedback(agent, task)
+
+    # Sin ejecución: solo obtener respuesta de texto
     name = agent["name"]
-
-    # Añadir hint de formato para que el modelo use fenced code blocks
-    task_with_hint = task + "\n\n(Always use fenced markdown code blocks for any code: ```lang\\ncode\\n```)"
-
-    # Intentar Groq primero con modelo potente
-    resp = _call_groq(system, task_with_hint, model="llama-3.3-70b-versatile")
+    system = agent["system"]
+    hint = "\n\n(Always use fenced markdown code blocks for any code: ```lang\ncode\n```)"
+    resp = _call_groq(system, task + hint, model="llama-3.3-70b-versatile")
     if resp:
-        return _process_response(name, resp, auto_exec)
-
-    # Fallback a OpenRouter — prueba varios modelos gratuitos
+        return f"[{name}]\n{resp}"
     for or_model in _OR_TEXT_MODELS:
-        resp = _call_openrouter(system, task_with_hint, model=or_model)
+        resp = _call_openrouter(system, task + hint, model=or_model)
         if resp:
-            return _process_response(name, resp, auto_exec)
+            return f"[{name}]\n{resp}"
+    return f"[{name}] No pude conectarme al LLM. Verifica GROQ_API_KEY u OPENROUTER_API_KEY."
 
-    return f"[{name}] No pude conectarme al LLM para este agente. Verifica GROQ_API_KEY u OPENROUTER_API_KEY."
+
+# ── Web search para coding ───────────────────────────────────────────────────
+
+_DOC_SEARCH_RE = re.compile(
+    r"(?:c[oó]mo\s+(?:se\s+)?(?:implementa[r]?|usa[r]?|hago?|creo?|configuro?)|"
+    r"qu[eé]\s+es|diferencia\s+entre|ejemplo\s+de|tutorial\s+de|"
+    r"best\s+practice|buena\s+pr[aá]ctica|documentaci[oó]n|docs?\s+de)",
+    re.IGNORECASE,
+)
+
+_CODE_KEYWORDS = re.compile(
+    r"\b(?:fastapi|django|flask|react|vue|angular|nextjs|pytorch|tensorflow|"
+    r"langchain|openai|anthropic|sqlalchemy|pydantic|celery|redis|postgres|"
+    r"mongodb|docker|kubernetes|terraform|github\s*actions|pytest|asyncio|"
+    r"aiohttp|httpx|requests|pandas|numpy|sklearn|huggingface|transformers|"
+    r"n8n|supabase|prisma|graphql|grpc|websocket|jwt|oauth|stripe|twilio)\b",
+    re.IGNORECASE,
+)
+
+
+def _fetch_url_text(url: str, max_chars: int = 3000) -> str:
+    """Descarga una URL y extrae texto limpio sin dependencias extra."""
+    import urllib.request, urllib.error, html, re as _re
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Nova/1.0"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        # Quitar scripts, estilos, tags
+        raw = _re.sub(r"<(script|style)[^>]*>.*?</\1>", "", raw, flags=_re.DOTALL | _re.IGNORECASE)
+        raw = _re.sub(r"<[^>]+>", " ", raw)
+        raw = html.unescape(raw)
+        raw = _re.sub(r"\s{2,}", " ", raw).strip()
+        return raw[:max_chars]
+    except Exception as e:
+        log.debug("[DocSearch] No pude fetchear %s: %s", url, e)
+        return ""
+
+
+def _search_and_fetch_docs(question: str, max_snippets: int = 2) -> str:
+    """
+    Busca en DDG y fetchea el texto de las URLs más relevantes.
+    Retorna contexto de documentación listo para inyectar en el prompt del LLM.
+    """
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        return ""
+
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(question + " documentation example", max_results=4))
+    except Exception as e:
+        log.debug("[DocSearch] DDG falló: %s", e)
+        return ""
+
+    if not results:
+        return ""
+
+    # Priorizar URLs de docs oficiales
+    _DOC_DOMAINS = ("docs.", "documentation.", "github.com", "readthedocs.io",
+                    "pypi.org", "npmjs.com", "developer.", "learn.microsoft",
+                    "developers.google", ".dev", "fastapi.tiangolo.com")
+    results.sort(key=lambda r: (
+        0 if any(d in r.get("href", "") for d in _DOC_DOMAINS) else 1
+    ))
+
+    context_parts = []
+    fetched = 0
+    for r in results:
+        if fetched >= max_snippets:
+            break
+        url = r.get("href", "")
+        title = r.get("title", url)
+        snippet = r.get("body", "")
+
+        # Primero el snippet de DDG (siempre disponible)
+        part = f"### {title}\nURL: {url}\n{snippet}"
+
+        # Intentar fetchear texto completo solo para URLs de docs
+        if any(d in url for d in _DOC_DOMAINS):
+            full = _fetch_url_text(url, max_chars=2000)
+            if full:
+                part += f"\n\nContenido:\n{full[:2000]}"
+
+        context_parts.append(part)
+        fetched += 1
+
+    if not context_parts:
+        return ""
+
+    return "## Documentación real encontrada en la web:\n\n" + "\n\n---\n\n".join(context_parts)
+
+
+def codear_con_docs(pregunta: str, agente_query: str = "backend architect") -> str:
+    """
+    Busca documentación real en la web y luego genera código con un especialista.
+    Evita que el LLM invente APIs — siempre basado en docs reales.
+    """
+    _load_agents()
+    agent = find_agent(agente_query) or find_agent("ai engineer") or find_agent("software architect")
+    if not agent:
+        return "No encontré agente disponible."
+
+    log.info("[DocSearch] Buscando docs para: %s", pregunta[:60])
+    docs_context = _search_and_fetch_docs(pregunta)
+
+    if docs_context:
+        task = (
+            f"{docs_context}\n\n"
+            f"---\n\n"
+            f"Usando la documentación real de arriba, responde y genera código para:\n{pregunta}\n\n"
+            f"IMPORTANTE: Solo usa APIs y patrones que aparezcan en la documentación provista. "
+            f"No inventes imports ni funciones que no estén en los docs."
+        )
+        log.info("[DocSearch] Docs encontradas — pasando contexto al especialista")
+    else:
+        log.info("[DocSearch] Sin docs — invocando especialista directamente")
+        task = pregunta
+
+    return ejecutar_con_feedback(agent, task)
 
 
 # ── Interfaz de skill ─────────────────────────────────────────────────────────
