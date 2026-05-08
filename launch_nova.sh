@@ -1,13 +1,8 @@
 #!/bin/bash
-# Launch Nova — Script de arranque unificado v3.0
-# Integra: Cerebro sync, módulos mejorados, visión, mouse celeste
+# Launch Nova — Script de arranque unificado
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
-
-# Configurar Python PATH
-export PATH="$HOME/.pyenv/versions/3.10.6/bin:$PATH"
-export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/src"
 
 # Si viene de Finder, abrir Terminal y volver a ejecutar
 if [ -z "$TERM" ]; then
@@ -15,18 +10,22 @@ if [ -z "$TERM" ]; then
     exit 0
 fi
 
-# Verificar Python
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Python 3 no encontrado. Instálalo con: brew install python3"
-    exit 1
+# Activar entorno virtual si existe
+if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+    source "$SCRIPT_DIR/.venv/bin/activate"
+    PYTHON="$SCRIPT_DIR/.venv/bin/python"
+else
+    # Fallback: pyenv o sistema
+    export PATH="$HOME/.pyenv/versions/3.10.6/bin:$PATH"
+    PYTHON="python3"
+    if ! command -v python3 &> /dev/null; then
+        echo "Python 3 no encontrado. Ejecuta: python install.py"
+        exit 1
+    fi
 fi
 
-# Verificar dependencias críticas
-if [ ! -f "requirements.txt" ]; then
-    echo "⚠️  requirements.txt no encontrado"
-fi
+export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/src"
 
-# Ejecutar el launcher principal
 clear
-echo "🚀 Iniciando Nova Personal Assistant..."
-python3 main.py
+echo "Iniciando Nova Personal Assistant..."
+"$PYTHON" main.py

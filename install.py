@@ -4,8 +4,9 @@ install.py — Instalador inteligente de Nova Personal Assistant
 Detecta el sistema operativo e instala las dependencias correctas.
 
 Uso:
-  python install.py          # instalación completa
-  python install.py --check  # solo verificar dependencias
+  python install.py             # instalación completa (crea .venv)
+  python install.py --check     # solo verificar dependencias
+  python install.py --uninstall # desinstalar Nova (elimina .venv, lanzadores, PATH)
 """
 
 import sys
@@ -39,6 +40,7 @@ def detect_platform() -> str:
         return "linux"
 
 PLATFORM = detect_platform()
+BASE_DIR  = os.path.dirname(os.path.abspath(__file__))
 
 # ─── Requisitos base (todas las plataformas) ─────────────────────────────────
 
@@ -104,17 +106,14 @@ PLATFORM_REQUIREMENTS = {
 
 SYSTEM_DEPS = {
     "macos":   [
-        # tesseract para OCR de imágenes (opcional)
         # ("tesseract", "brew install tesseract  # OCR imágenes (opcional)"),
     ],
-    "windows": [],         # PowerShell tiene todo lo necesario (SAPI, etc.)
+    "windows": [],
     "linux":   [
         ("espeak-ng", "sudo apt install espeak-ng        # TTS voz"),
         ("mpg123",    "sudo apt install mpg123            # reproducción MP3"),
         ("xclip",     "sudo apt install xclip             # portapapeles"),
         ("scrot",     "sudo apt install scrot             # capturas de pantalla"),
-        # tesseract para OCR de imágenes (opcional)
-        # ("tesseract", "sudo apt install tesseract-ocr tesseract-ocr-spa  # OCR"),
     ],
 }
 
@@ -158,50 +157,131 @@ def check_system_deps() -> None:
             warn(f"{binary} no encontrado — instalar con: {install_cmd}")
 
 
-def create_desktop_launcher() -> None:
-    """Crea un acceso directo / lanzador en el escritorio según el OS."""
-    base = os.path.dirname(os.path.abspath(__file__))
+# ─── Entorno virtual (.venv) ─────────────────────────────────────────────────
 
-    # Detectar escritorio en inglés y español (Windows puede ser "Escritorio")
+def create_venv() -> str:
+    """Crea .venv en el directorio del proyecto y retorna la ruta al Python del venv."""
+    venv_dir = os.path.join(BASE_DIR, ".venv")
+    if not os.path.exists(venv_dir):
+        header("Creando entorno virtual (.venv)")
+        try:
+            subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
+            ok(f".venv creado en {venv_dir}")
+        except subprocess.CalledProcessError as e:
+            warn(f"No se pudo crear .venv: {e} — usando Python del sistema")
+            return sys.executable
+    else:
+        ok(".venv ya existe — reutilizando")
+
+    if PLATFORM == "windows":
+        venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
+    else:
+        venv_python = os.path.join(venv_dir, "bin", "python")
+
+    if not os.path.exists(venv_python):
+        warn(f"Python no encontrado en {venv_python} — usando Python del sistema")
+        return sys.executable
+    return venv_python
+
+
+# ─── Instalación pip ─────────────────────────────────────────────────────────
+
+def pip_install(packages: list[str], optional: bool = False,
+                python_exe: str | None = None) -> bool:
+    if not packages:
+        return True
+
+    python = python_exe or sys.executable
+
+    # En Windows, PyAudio requiere compilación — intentar wheel precompilado
+    if PLATFORM == "windows" and "PyAudio" in packages:
+        warn("PyAudio requiere compilación en Windows. Intentando wheel precompilado...")
+        packages = [p for p in packages if p != "PyAudio"]
+        try:
+            subprocess.run(
+                [python, "-m", "pip", "install", "--upgrade", "--only-binary", ":all:", "PyAudio"],
+                capture_output=True,
+            )
+        except Exception:
+            pass
+
+    cmd = [python, "-m", "pip", "install", "--upgrade", *packages]
+    result = subprocess.run(cmd)
+
+    if result.returncode != 0 and optional:
+        warn("Algunas dependencias opcionales fallaron (se usarán alternativas)")
+        return True
+    return result.returncode == 0
+
+
+# ─── Lanzadores de escritorio ────────────────────────────────────────────────
+
+def _get_desktop() -> str | None:
+    """Retorna la ruta al escritorio o None si no se encuentra."""
     home = os.path.expanduser("~")
-    desktop = None
     for candidate in ["Desktop", "Escritorio", "Bureau", "Schreibtisch"]:
         p = os.path.join(home, candidate)
         if os.path.isdir(p):
-            desktop = p
-            break
-    # Fallback: pedir ruta via WinAPI si estamos en Windows
-    if desktop is None and PLATFORM == "windows":
+            return p
+    if PLATFORM == "windows":
         try:
             import ctypes
             buf = ctypes.create_unicode_buffer(260)
             ctypes.windll.shell32.SHGetFolderPathW(0, 0, 0, 0, buf)
-            desktop = buf.value  # CSIDL_DESKTOP
+            p = buf.value
+            if p and os.path.isdir(p):
+                return p
         except Exception:
             pass
+    return None
+
+
+def create_desktop_launcher(venv_python: str | None = None) -> None:
+    """Crea un acceso directo / lanzador en el escritorio según el OS."""
+    desktop = _get_desktop()
     if desktop is None or not os.path.isdir(desktop):
         warn("No se encontró el escritorio — saltando creación de lanzador")
         return
 
+    # Python a usar en los scripts generados
+    python_exe = venv_python or sys.executable
+    activate_venv_bat = (
+        f'if exist "{BASE_DIR}\\.venv\\Scripts\\activate.bat" '
+        f'call "{BASE_DIR}\\.venv\\Scripts\\activate.bat"\n'
+    )
+    activate_venv_sh = (
+        f'if [ -f "{BASE_DIR}/.venv/bin/activate" ]; then\n'
+        f'    source "{BASE_DIR}/.venv/bin/activate"\n'
+        f'fi\n'
+    )
+
     if PLATFORM == "macos":
+        # Crear / actualizar launch_nova.sh que activa venv
+        sh_path = os.path.join(BASE_DIR, "launch_nova.sh")
+        with open(sh_path, "w") as f:
+            f.write(
+                f'#!/bin/bash\n'
+                f'cd "{BASE_DIR}"\n'
+                + activate_venv_sh +
+                f'export PYTHONPATH="{BASE_DIR}:{BASE_DIR}/src"\n'
+                f'"{python_exe}" main.py\n'
+            )
+        os.chmod(sh_path, 0o755)
+        ok(f"launch_nova.sh actualizado")
+
         app = os.path.join(desktop, "Nova.app")
         try:
             os.makedirs(os.path.join(app, "Contents", "MacOS"), exist_ok=True)
             os.makedirs(os.path.join(app, "Contents", "Resources"), exist_ok=True)
 
-            # Ejecutable principal
             exe = os.path.join(app, "Contents", "MacOS", "Nova")
             with open(exe, "w") as f:
                 f.write(
                     f'#!/bin/bash\n'
-                    f'cd "{base}"\n'
-                    f'export PATH="$HOME/.pyenv/versions/3.10.6/bin:$PATH"\n'
-                    f'export PYTHONPATH="{base}:{base}/src"\n'
-                    f'open -a Terminal "{base}/launch_nova.sh"\n'
+                    f'open -a Terminal "{sh_path}"\n'
                 )
             os.chmod(exe, 0o755)
 
-            # Info.plist
             with open(os.path.join(app, "Contents", "Info.plist"), "w") as f:
                 f.write(
                     '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -212,14 +292,14 @@ def create_desktop_launcher() -> None:
                     '  <key>CFBundleIdentifier</key><string>com.ehr051.nova</string>\n'
                     '  <key>CFBundleName</key><string>Nova</string>\n'
                     '  <key>CFBundleDisplayName</key><string>Nova</string>\n'
-                    '  <key>CFBundleVersion</key><string>3.1</string>\n'
+                    '  <key>CFBundleVersion</key><string>3.2</string>\n'
                     '  <key>CFBundleIconFile</key><string>nova</string>\n'
                     '  <key>CFBundlePackageType</key><string>APPL</string>\n'
                     '</dict></plist>\n'
                 )
 
-            # Ícono .icns (generado desde assets/nova.png si existe iconutil)
-            png = os.path.join(base, "assets", "nova.png")
+            # Ícono .icns (desde assets/nova.png si existe iconutil)
+            png = os.path.join(BASE_DIR, "assets", "nova.png")
             if os.path.exists(png) and shutil.which("iconutil"):
                 try:
                     import tempfile
@@ -236,24 +316,22 @@ def create_desktop_launcher() -> None:
                                    capture_output=True)
                     shutil.rmtree(iconset, ignore_errors=True)
                 except Exception:
-                    pass  # sin ícono personalizado — Finder usa el genérico
+                    pass
 
             ok(f"Lanzador creado: {app}")
         except Exception as e:
             warn(f"No se pudo crear Nova.app en escritorio: {e}")
 
     elif PLATFORM == "windows":
-        # Siempre crear launch_nova.bat en el directorio del proyecto.
-        # El .bat mantiene la ventana abierta si hay error (pause al final).
-        ico  = os.path.join(base, "assets", "nova.ico")
-        bat  = os.path.join(base, "launch_nova.bat")
-        lnk  = os.path.join(desktop, "Nova.lnk")
-        python_exe = sys.executable
+        ico = os.path.join(BASE_DIR, "assets", "nova.ico")
+        bat = os.path.join(BASE_DIR, "launch_nova.bat")
+        lnk = os.path.join(desktop, "Nova.lnk")
 
         with open(bat, "w", encoding="utf-8") as f:
             f.write(
                 f'@echo off\n'
-                f'cd /d "{base}"\n'
+                f'cd /d "{BASE_DIR}"\n'
+                + activate_venv_bat +
                 f'"{python_exe}" main.py\n'
                 f'if errorlevel 1 (\n'
                 f'    echo.\n'
@@ -263,10 +341,9 @@ def create_desktop_launcher() -> None:
             )
         ok(f"Wrapper creado: {bat}")
 
-        # Crear .lnk que apunta al .bat (ventana no desaparece en error)
         bat_path  = bat.replace("\\", "\\\\")
         lnk_path  = lnk.replace("\\", "\\\\")
-        base_path = base.replace("\\", "\\\\")
+        base_path = BASE_DIR.replace("\\", "\\\\")
         ico_path  = ico.replace("\\", "\\\\")
         ps_script = (
             f'$ws = New-Object -ComObject WScript.Shell; '
@@ -292,21 +369,31 @@ def create_desktop_launcher() -> None:
             warn(f"No se pudo crear lanzador en escritorio: {e}")
 
     elif PLATFORM == "linux":
+        # Crear launch_nova.sh con activación de venv
+        sh_path = os.path.join(BASE_DIR, "launch_nova.sh")
+        with open(sh_path, "w") as f:
+            f.write(
+                f'#!/bin/bash\n'
+                f'cd "{BASE_DIR}"\n'
+                + activate_venv_sh +
+                f'export PYTHONPATH="{BASE_DIR}:{BASE_DIR}/src"\n'
+                f'"{python_exe}" main.py\n'
+            )
+        os.chmod(sh_path, 0o755)
+
         launcher = os.path.join(desktop, "nova.desktop")
-        python   = sys.executable
-        png      = os.path.join(base, "assets", "nova.png")
+        png = os.path.join(BASE_DIR, "assets", "nova.png")
         icon_line = f"Icon={png}" if os.path.exists(png) else "Icon=utilities-terminal"
         try:
             with open(launcher, "w") as f:
                 f.write(
                     f"[Desktop Entry]\nType=Application\nName=Nova\n"
                     f"Comment=Nova Personal Assistant\n"
-                    f"Exec={python} {os.path.join(base, 'main.py')}\n"
-                    f"Path={base}\n{icon_line}\nTerminal=true\n"
+                    f"Exec={sh_path}\n"
+                    f"Path={BASE_DIR}\n{icon_line}\nTerminal=true\n"
                     f"Categories=Utility;AI;\n"
                 )
             os.chmod(launcher, 0o755)
-            # Marcar como confiable (GNOME/KDE)
             subprocess.run(["gio", "set", launcher,
                             "metadata::trusted", "true"],
                            capture_output=True)
@@ -315,20 +402,20 @@ def create_desktop_launcher() -> None:
             warn(f"No se pudo crear lanzador en escritorio: {e}")
 
 
+# ─── Configuración (.env) ────────────────────────────────────────────────────
+
 def check_env_file() -> bool:
     """Crea .env desde .env.example y pide las API keys interactivamente."""
     import re as _re
-    base = os.path.dirname(os.path.abspath(__file__))
-    env_path     = os.path.join(base, ".env")
-    example_path = os.path.join(base, ".env.example")
+    env_path     = os.path.join(BASE_DIR, ".env")
+    example_path = os.path.join(BASE_DIR, ".env.example")
 
     if os.path.exists(env_path):
         ok(".env encontrado")
         return True
 
     if os.path.exists(example_path):
-        import shutil as _sh
-        _sh.copy(example_path, env_path)
+        shutil.copy(example_path, env_path)
     else:
         warn(".env.example no encontrado — creando .env mínimo")
         with open(env_path, "w", encoding="utf-8") as _f:
@@ -355,10 +442,10 @@ def check_env_file() -> bool:
         val = m.group(1).strip()
         return bool(val) and "..." not in val and len(val) >= 16
 
-    def _ask_group(header: str, note: str, keys: list) -> bool:
+    def _ask_group(hdr: str, note: str, keys: list) -> bool:
         if all(_already_set(k) for k, _ in keys):
             return False
-        print(f"\n  ── {header} ──")
+        print(f"\n  ── {hdr} ──")
         if note:
             print(f"  {note}")
         return True
@@ -427,42 +514,19 @@ def check_env_file() -> bool:
         warn("Sin keys — Nova usará Ollama local si está disponible.")
     return True
 
-# ─── Instalación ─────────────────────────────────────────────────────────────
 
-def pip_install(packages: list[str], optional: bool = False) -> bool:
-    if not packages:
-        return True
-
-    # En Windows, PyAudio requiere compilación — intentar wheel precompilado
-    if PLATFORM == "windows" and "PyAudio" in packages:
-        warn("PyAudio requiere compilación en Windows. Intentando wheel precompilado...")
-        packages = [p for p in packages if p != "PyAudio"]
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade", "--only-binary", ":all:", "PyAudio"],
-                capture_output=True,
-            )
-            if result.returncode != 0:
-                warn("No se pudo instalar PyAudio precompilado — se usará sounddevice.")
-        except Exception:
-            pass
-
-    cmd = [sys.executable, "-m", "pip", "install", "--upgrade", *packages]
-    result = subprocess.run(cmd)
-
-    if result.returncode != 0 and optional:
-        warn("Algunas dependencias opcionales fallaron (se usarán alternativas)")
-        return True
-    return result.returncode == 0
-
+# ─── Instalación completa ─────────────────────────────────────────────────────
 
 def install_all() -> None:
     header(f"Instalando Nova — plataforma detectada: {PLATFORM.upper()}")
 
+    # 0. Crear entorno virtual
+    venv_python = create_venv()
+
     # 1. Requisitos base
     header("Dependencias base (todas las plataformas)")
     info(f"Instalando {len(BASE_REQUIREMENTS)} paquetes...")
-    if pip_install(BASE_REQUIREMENTS):
+    if pip_install(BASE_REQUIREMENTS, python_exe=venv_python):
         ok("Dependencias base instaladas")
     else:
         err("Algunas dependencias base fallaron — revisá el output")
@@ -472,22 +536,20 @@ def install_all() -> None:
     if plat_deps:
         header(f"Dependencias {PLATFORM.upper()}")
         info(f"Instalando {len(plat_deps)} paquetes específicos...")
-        if pip_install(plat_deps, optional=True):
+        if pip_install(plat_deps, optional=True, python_exe=venv_python):
             ok(f"Dependencias {PLATFORM} instaladas")
         else:
             warn(f"Algunas dependencias {PLATFORM} fallaron (pueden ser opcionales)")
 
-    # 2b. Dependencias opcionales (PyAudio como fallback de audio)
+    # 2b. Audio opcional
     opt_deps = OPTIONAL_AUDIO.get(PLATFORM, [])
     if opt_deps:
         header("Dependencias opcionales de audio")
-        info(f"Intentando instalar {len(opt_deps)} paquetes opcionales...")
-        pip_install(opt_deps, optional=True)
+        pip_install(opt_deps, optional=True, python_exe=venv_python)
 
-    # 2c. Dependencias opcionales generales (LSP mejorado, OCR, políglota)
+    # 2c. Opcionales generales
     header("Dependencias opcionales (mejoras)")
-    info(f"Intentando instalar {len(OPTIONAL_REQUIREMENTS)} paquetes opcionales...")
-    pip_install(OPTIONAL_REQUIREMENTS, optional=True)
+    pip_install(OPTIONAL_REQUIREMENTS, optional=True, python_exe=venv_python)
 
     # 3. Deps de sistema
     check_system_deps()
@@ -505,14 +567,14 @@ def install_all() -> None:
         try:
             info("Ejecutando post-install de pywin32...")
             subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--upgrade", "pywin32"],
+                [venv_python, "-m", "pip", "install", "--upgrade", "pywin32"],
                 capture_output=False,
             )
         except Exception:
             pass
 
-    # ── Crear lanzador en el escritorio ─────────────────────────────────────
-    create_desktop_launcher()
+    # 7. Lanzador en el escritorio (apunta a venv python)
+    create_desktop_launcher(venv_python=venv_python)
 
     # ── Resumen final ───────────────────────────────────────────────────────
     print(f"\n{'─'*55}")
@@ -523,20 +585,121 @@ def install_all() -> None:
         print(f"  O desde terminal:  {CYAN}./launch_nova.sh{RESET}")
     elif PLATFORM == "windows":
         print(f"  Hacé doble clic en {BOLD}Nova{RESET} en el Escritorio para iniciar.")
-        print(f"  O desde terminal:  {CYAN}python main.py{RESET}")
+        print(f"  O desde terminal:  {CYAN}launch_nova.bat{RESET}")
     else:
         print(f"  Hacé doble clic en {BOLD}Nova{RESET} en el Escritorio para iniciar.")
-        print(f"  O desde terminal:  {CYAN}python main.py{RESET}")
+        print(f"  O desde terminal:  {CYAN}./launch_nova.sh{RESET}")
     print()
     if PLATFORM == "windows":
         input("  Presioná Enter para cerrar el instalador...")
     print()
 
 
+# ─── Desinstalación ───────────────────────────────────────────────────────────
+
+def uninstall() -> None:
+    header("Desinstalando Nova")
+
+    removed_any = False
+
+    # 1. Eliminar entorno virtual
+    venv_dir = os.path.join(BASE_DIR, ".venv")
+    if os.path.exists(venv_dir):
+        try:
+            shutil.rmtree(venv_dir)
+            ok(".venv eliminado")
+            removed_any = True
+        except Exception as e:
+            warn(f"No se pudo eliminar .venv: {e}")
+    else:
+        info(".venv no existe — nada que eliminar")
+
+    # 2. Eliminar lanzadores del escritorio
+    desktop = _get_desktop()
+    if desktop:
+        candidates = [
+            os.path.join(desktop, "Nova.lnk"),       # Windows
+            os.path.join(desktop, "Nova.app"),        # macOS
+            os.path.join(desktop, "nova.desktop"),    # Linux
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                try:
+                    if os.path.isdir(path):
+                        shutil.rmtree(path)
+                    else:
+                        os.remove(path)
+                    ok(f"Eliminado: {path}")
+                    removed_any = True
+                except Exception as e:
+                    warn(f"No se pudo eliminar {path}: {e}")
+
+    # 3. Eliminar scripts de lanzamiento del proyecto
+    for launcher in ["launch_nova.bat", "launch_nova.sh"]:
+        p = os.path.join(BASE_DIR, launcher)
+        if os.path.exists(p):
+            try:
+                os.remove(p)
+                ok(f"Eliminado: {launcher}")
+            except Exception as e:
+                warn(f"No se pudo eliminar {launcher}: {e}")
+
+    # 4. Eliminar del PATH de Windows (registro)
+    if PLATFORM == "windows":
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Environment",
+                0, winreg.KEY_READ | winreg.KEY_WRITE
+            )
+            try:
+                path_val, _ = winreg.QueryValueEx(key, "PATH")
+                parts = [p for p in path_val.split(";") if BASE_DIR.lower() not in p.lower()]
+                new_path = ";".join(parts)
+                if new_path != path_val:
+                    winreg.SetValueEx(key, "PATH", 0, winreg.REG_EXPAND_SZ, new_path)
+                    ok("Eliminado de PATH (registro)")
+            except FileNotFoundError:
+                pass
+            winreg.CloseKey(key)
+        except Exception as e:
+            warn(f"No se pudo modificar PATH: {e}")
+
+    # 5. Preguntar si eliminar .env
+    env_path = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(env_path):
+        print()
+        try:
+            resp = input("  ¿Eliminar .env (API keys)? [s/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            resp = "n"
+        if resp in ("s", "si", "sí", "y", "yes"):
+            try:
+                os.remove(env_path)
+                ok(".env eliminado")
+            except Exception as e:
+                warn(f"No se pudo eliminar .env: {e}")
+        else:
+            info(".env conservado — tus API keys siguen guardadas")
+
+    print()
+    if removed_any:
+        ok("Nova desinstalado. El código fuente sigue en su lugar.")
+        info("Para reinstalar ejecutá: python install.py")
+    else:
+        info("Nada que eliminar — Nova no estaba instalado.")
+
+    if PLATFORM == "windows":
+        input("\n  Presioná Enter para cerrar...")
+
+
+# ─── Verificación ─────────────────────────────────────────────────────────────
+
 def check_only() -> None:
     header(f"Verificando instalación — {PLATFORM.upper()}")
-    ok_py = check_python_version()
-    ok_pip = check_pip()
+    check_python_version()
+    check_pip()
     check_ollama()
     check_system_deps()
     check_env_file()
@@ -551,6 +714,13 @@ def check_only() -> None:
         except ImportError:
             err(f"{mod} — ejecutá: python install.py")
 
+    # Verificar venv
+    venv_dir = os.path.join(BASE_DIR, ".venv")
+    if os.path.exists(venv_dir):
+        ok(f".venv presente en {venv_dir}")
+    else:
+        warn(".venv no existe — ejecutá python install.py para crearlo")
+
     print()
 
 
@@ -558,10 +728,13 @@ def check_only() -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Instalador de Nova Personal Assistant")
-    parser.add_argument("--check", action="store_true", help="Solo verificar dependencias")
+    parser.add_argument("--check",     action="store_true", help="Solo verificar dependencias")
+    parser.add_argument("--uninstall", action="store_true", help="Desinstalar Nova (.venv + lanzadores)")
     args = parser.parse_args()
 
-    if args.check:
+    if args.uninstall:
+        uninstall()
+    elif args.check:
         check_only()
     else:
         install_all()

@@ -1,5 +1,6 @@
 .env
 launch_nova.bat
+.venv/
 __pycache__/
 *.pyc
 *.pyo
