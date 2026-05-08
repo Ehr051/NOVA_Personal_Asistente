@@ -98,6 +98,31 @@ class NovaNeuroMemory:
     proveyendo retención semántica y extracción automática de entidades.
     """
     
+    def close(self) -> None:
+        """Cierra el cliente Qdrant en el thread correcto para evitar el error SQLite cross-thread."""
+        if not self.m:
+            return
+        try:
+            vs = getattr(self.m, "vector_store", None)
+            client = getattr(vs, "client", None)
+            if client:
+                client.close()
+        except Exception:
+            pass
+        finally:
+            self.m = None
+            if self._qdrant_lock:
+                try:
+                    self._qdrant_lock.release()
+                except Exception:
+                    pass
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def __init__(self, user_id="nova_user"):
         self.user_id = user_id
         self._simple: _SimpleJSONMemory | None = None  # fallback siempre activo

@@ -4212,7 +4212,7 @@ def maybe_clarify_command(user_input: str) -> str | None:
         "abre": "¿Qué quieres que abra, Señor? Puedes decir: 'abre Safari' o 'abre archivo ~/Desktop/nota.txt'.",
         "abrir": "¿Qué quieres abrir exactamente, Señor?",
         "cierra": "¿Qué app debo cerrar, Señor?",
-        "cerrar": "¿Qué app debo cerrar, Señor?",
+        "cerrar": "¿Qué app debo cerrar, Señor? Para cerrar Nova, di 'cerrar Nova' o 'Nova salir'.",
         "busca": "¿Qué quieres que busque, Señor? Puedo buscar en web o archivos.",
         "buscar": "Indícame qué término quieres buscar, Señor.",
         "ejecuta": "Necesito el comando exacto. Ejemplo: 'ejecuta el comando ls -la'.",

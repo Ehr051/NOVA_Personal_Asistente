@@ -216,9 +216,12 @@ def _detect_lang(text: str) -> str:
 # ─── TTS con barge-in ────────────────────────────────────────────────────────
 
 BARGE_IN_THRESHOLD = float(os.getenv("BARGE_IN_THRESHOLD", "600"))
+# Segundos de silencio post-TTS antes de volver a escuchar (evita eco acústico)
+TTS_COOLDOWN = float(os.getenv("TTS_COOLDOWN", "0.8"))
 
 _say_proc: subprocess.Popen | None = None   # proceso activo (say o afplay)
 _tmp_audio: str | None = None               # archivo mp3 temporal de edge-tts
+_tts_until: float = 0.0                     # timestamp hasta el que no escuchar
 
 
 def interrupt_speech() -> None:
@@ -366,6 +369,9 @@ def speak(text: str, hud: NovaHUD, lang: str = "es") -> None:
             pass
         _tmp_audio = None
 
+    # Cooldown: no escuchar hasta que el eco acústico de la habitación se disipe
+    global _tts_until
+    _tts_until = time.time() + TTS_COOLDOWN
     hud.put_state(status="IDLE")
 
 
@@ -552,6 +558,11 @@ def listen(
     - Tras activación, mantiene una ventana de contexto para follow-ups.
     - En modo dictado, todo texto reconocido se toma como contenido.
     """
+    # No escuchar mientras el eco post-TTS pueda contaminar el micrófono
+    if time.time() < _tts_until:
+        hud.put_state(status="IDLE")
+        return None
+
     hud.put_state(status="LISTENING")
     try:
         with mic as source:
@@ -689,8 +700,12 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
     if extra_context:
         system += f"\n\n[Información en tiempo real]\n{extra_context}"
 
-    # Modo políglota: detectar idioma del usuario e instruir al LLM
-    detected_lang = _detect_lang(last_user) if last_user else "es"
+    # Modo políglota: detectar idioma del usuario e instruir al LLM.
+    # Solo se aplica a mensajes cortos (< 120 chars) para no activarse en
+    # descripciones de imágenes de APIs externas que vienen en otro idioma.
+    detected_lang = "es"
+    if last_user and len(last_user) < 120:
+        detected_lang = _detect_lang(last_user)
     if detected_lang != "es":
         lang_name = _LANG_NAMES.get(detected_lang, detected_lang)
         system += f"\n\nResponde SIEMPRE en {lang_name}. El usuario está escribiendo en {lang_name}."
@@ -1037,6 +1052,11 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             hud.put_state(status="SPEAKING", response_text=farewell)
             speak(farewell, hud)
             stop_event.set()
+            # Cerrar Qdrant en este thread para evitar SQLite cross-thread error
+            try:
+                nova_memory.neuro_memory.close()
+            except Exception:
+                pass
             break
 
         if lower_input in {"apágate", "duerme", "silencio", "silenciar", "suspéndete", "modo silencioso"}:
