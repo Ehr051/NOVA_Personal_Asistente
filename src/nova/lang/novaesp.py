@@ -94,10 +94,15 @@ def _is_my_voice(wav_bytes: bytes) -> bool:
     """Verifica si el audio pertenece al usuario enrollado usando MFCC."""
     if not _SPEAKER_VERIFY or _SPEAKER_PROFILE is None:
         return True   # sin perfil → acepta todo
+
+    # Si Nova está hablando o acaba de hablar, rechazar siempre — es eco
+    if _nova_speaking or time.time() < _tts_until:
+        return False
+
     try:
         import numpy as np
         import librosa
-        import io, soundfile as sf
+        import io
         y, _ = librosa.load(io.BytesIO(wav_bytes), sr=16000, mono=True)
         if len(y) < 16000 * 0.3:
             return False
@@ -108,10 +113,11 @@ def _is_my_voice(wav_bytes: bytes) -> bool:
             return False
         feats = feats / norm
         sim = float(np.dot(_SPEAKER_PROFILE, feats))
+        log.debug("[Speaker] similitud=%.3f umbral=%.2f", sim, _SPEAKER_THRESHOLD)
         return sim >= _SPEAKER_THRESHOLD
     except Exception as e:
-        log.warning("[Speaker] Error verificando voz: %s", e)
-        return True   # falla segura → acepta
+        log.warning("[Speaker] Error verificando voz: %s — rechazando por seguridad", e)
+        return False   # falla → rechazar (no abrir a cualquier voz)
 
 # ─── Single instance lock ────────────────────────────────────────────────────
 _PID_FILE = os.path.expanduser("__DOTNOVA_PATH__/nova.pid")
@@ -221,7 +227,8 @@ TTS_COOLDOWN = float(os.getenv("TTS_COOLDOWN", "0.8"))
 
 _say_proc: subprocess.Popen | None = None   # proceso activo (say o afplay)
 _tmp_audio: str | None = None               # archivo mp3 temporal de edge-tts
-_tts_until: float = 0.0                     # timestamp hasta el que no escuchar
+_tts_until: float = 0.0                     # timestamp hasta el que no escuchar (eco post-TTS)
+_nova_speaking: bool = False                # True mientras TTS reproduce activamente
 
 
 def interrupt_speech() -> None:
@@ -327,10 +334,11 @@ def speak(text: str, hud: NovaHUD, lang: str = "es") -> None:
     Intenta edge-tts neural primero; si falla (sin internet, error), usa macOS say.
     lang: ISO 639-1 code — selecciona voz adecuada para idiomas no-español.
     """
-    global _say_proc, _tmp_audio, EDGE_VOICE, NOVA_VOICE
+    global _say_proc, _tmp_audio, EDGE_VOICE, NOVA_VOICE, _nova_speaking, _tts_until
 
     interrupt_speech()  # Detener cualquier iteración anterior instantáneamente.
 
+    _nova_speaking = True
     hud.put_state(status="SPEAKING")
     clean = _clean_for_speech(text)
     voice_text = clean if len(clean) <= 1500 else clean[:1500] + "."
@@ -370,7 +378,7 @@ def speak(text: str, hud: NovaHUD, lang: str = "es") -> None:
         _tmp_audio = None
 
     # Cooldown: no escuchar hasta que el eco acústico de la habitación se disipe
-    global _tts_until
+    _nova_speaking = False
     _tts_until = time.time() + TTS_COOLDOWN
     hud.put_state(status="IDLE")
 
@@ -701,11 +709,7 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
         system += f"\n\n[Información en tiempo real]\n{extra_context}"
 
     # Modo políglota: detectar idioma del usuario e instruir al LLM.
-    # Solo se aplica a mensajes cortos (< 120 chars) para no activarse en
-    # descripciones de imágenes de APIs externas que vienen en otro idioma.
-    detected_lang = "es"
-    if last_user and len(last_user) < 120:
-        detected_lang = _detect_lang(last_user)
+    detected_lang = _detect_lang(last_user) if last_user else "es"
     if detected_lang != "es":
         lang_name = _LANG_NAMES.get(detected_lang, detected_lang)
         system += f"\n\nResponde SIEMPRE en {lang_name}. El usuario está escribiendo en {lang_name}."
