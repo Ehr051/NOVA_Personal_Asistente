@@ -166,28 +166,37 @@ VOICE_RATE    = os.getenv("NOVA_VOICE_RATE", "150")
 FOLLOWUP_WINDOW_SEC = int(os.getenv("FOLLOWUP_WINDOW_SEC", "33"))
 REQUIRE_WAKE_WORD   = os.getenv("REQUIRE_WAKE_WORD", "1").strip() != "0"
 
-# ─── Detección de idioma ──────────────────────────────────────────────────────
+# ─── Idioma de sesión (explícito, activado por el usuario) ───────────────────
+# El usuario dice "habla en inglés" / "vuelve al español" para cambiar.
+# NO se auto-detecta — evita activaciones accidentales por descripciones de APIs.
 
-_EN_WORDS = frozenset([
-    "the","is","are","you","what","how","can","please","hello","hi",
-    "could","would","should","do","does","did","have","has","will",
-    "when","where","why","who","this","that","it","a","an","i","my",
-])
-_FR_WORDS = frozenset([
-    "le","la","les","est","vous","comment","pourquoi","quand","bonjour",
-    "merci","oui","non","avec","pour","dans","je","tu","il","elle","nous",
-])
-_PT_WORDS = frozenset([
-    "você","obrigado","como","quando","porque","olá","por","para","não",
-    "sim","está","são","uma","mas","eu","ele","ela","nós","isso","aqui",
-])
+_SESSION_LANG: str = "es"   # idioma activo en la sesión actual
 
 _LANG_NAMES: dict[str, str] = {
+    "es": "español",
     "en": "inglés",
     "fr": "francés",
     "pt": "portugués",
     "de": "alemán",
     "it": "italiano",
+    "ru": "ruso",
+    "zh": "chino",
+    "ja": "japonés",
+    "ar": "árabe",
+}
+
+# Mapa de palabras clave → código ISO para skill_cambiar_idioma
+_LANG_KEYWORDS: dict[str, str] = {
+    "español": "es", "castellano": "es", "spanish": "es",
+    "inglés": "en", "ingles": "en", "english": "en",
+    "francés": "fr", "frances": "fr", "french": "fr",
+    "portugués": "pt", "portugues": "pt", "portuguese": "pt",
+    "alemán": "de", "aleman": "de", "german": "de", "deutsch": "de",
+    "italiano": "it", "italian": "it",
+    "ruso": "ru", "russian": "ru",
+    "chino": "zh", "chinese": "zh", "mandarín": "zh",
+    "japonés": "ja", "japones": "ja", "japanese": "ja",
+    "árabe": "ar", "arabe": "ar", "arabic": "ar",
 }
 
 # edge-tts voices para idiomas no-español
@@ -197,6 +206,8 @@ _LANG_EDGE_VOICES: dict[str, str] = {
     "pt": os.getenv("EDGE_VOICE_PT", "pt-BR-AntonioNeural"),
     "de": os.getenv("EDGE_VOICE_DE", "de-DE-ConradNeural"),
     "it": os.getenv("EDGE_VOICE_IT", "it-IT-DiegoNeural"),
+    "ru": os.getenv("EDGE_VOICE_RU", "ru-RU-DmitryNeural"),
+    "zh": os.getenv("EDGE_VOICE_ZH", "zh-CN-YunxiNeural"),
 }
 
 # macOS say voices para idiomas no-español
@@ -207,16 +218,12 @@ _LANG_MAC_VOICES: dict[str, str] = {
 }
 
 
-def _detect_lang(text: str) -> str:
-    """Returns ISO 639-1 code: 'es', 'en', 'fr', 'pt'. Defaults to 'es'."""
-    words = set(text.lower().split())
-    if len(words & _EN_WORDS) >= 2:
-        return "en"
-    if len(words & _FR_WORDS) >= 2:
-        return "fr"
-    if len(words & _PT_WORDS) >= 2:
-        return "pt"
-    return "es"
+def set_session_lang(lang_code: str) -> str:
+    """Cambia el idioma de sesión. Retorna mensaje de confirmación."""
+    global _SESSION_LANG
+    _SESSION_LANG = lang_code
+    name = _LANG_NAMES.get(lang_code, lang_code)
+    return f"Perfecto, Señor. A partir de ahora hablo en {name}."
 
 
 # ─── TTS con barge-in ────────────────────────────────────────────────────────
@@ -675,9 +682,9 @@ def _vault_context_for(user_text: str) -> str:
 
 def _build_messages(history: list[dict], base_system: str, extra_context: str = "") -> tuple[list[dict], str]:
     """
-    Returns (messages, detected_lang).
-    detected_lang is 'es' by default; non-Spanish when the last user message
-    triggers language detection so callers can choose TTS voice accordingly.
+    Returns (messages, session_lang).
+    session_lang es el idioma activo (_SESSION_LANG) — cambia solo cuando el
+    usuario lo pide explícitamente con "habla en inglés" / "vuelve al español".
     """
     facts = nova_memory.get_all_facts()
     system = base_system
@@ -708,11 +715,10 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
     if extra_context:
         system += f"\n\n[Información en tiempo real]\n{extra_context}"
 
-    # Modo políglota: detectar idioma del usuario e instruir al LLM.
-    detected_lang = _detect_lang(last_user) if last_user else "es"
-    if detected_lang != "es":
-        lang_name = _LANG_NAMES.get(detected_lang, detected_lang)
-        system += f"\n\nResponde SIEMPRE en {lang_name}. El usuario está escribiendo en {lang_name}."
+    # Idioma de sesión: el usuario lo activa explícitamente ("habla en inglés")
+    if _SESSION_LANG != "es":
+        lang_name = _LANG_NAMES.get(_SESSION_LANG, _SESSION_LANG)
+        system += f"\n\nResponde SIEMPRE en {lang_name}. El usuario ha solicitado este idioma."
 
     msgs = [{"role": "system", "content": system}]
     # Filtrar roles "system" y normalizar content multimodal (imágenes en historial rompen Groq 400)
@@ -731,7 +737,7 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
         elif not isinstance(content, str):
             content = str(content)
         msgs.append({"role": m["role"], "content": content or " "})
-    return msgs, detected_lang
+    return msgs, _SESSION_LANG
 
 
 # ─── Loop principal de NOVA (corre en hilo background) ─────────────────────

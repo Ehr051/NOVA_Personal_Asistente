@@ -2332,6 +2332,22 @@ def skill_leer_archivo(args: str) -> str:
 
 
 
+def skill_cambiar_idioma(texto: str) -> str:
+    """Cambia el idioma de la sesión. El usuario lo activa explícitamente."""
+    try:
+        from nova.lang.novaesp import set_session_lang, _LANG_KEYWORDS, _LANG_NAMES
+    except ImportError:
+        return "Módulo de idioma no disponible."
+
+    texto_lower = texto.lower().strip()
+    for keyword, code in _LANG_KEYWORDS.items():
+        if keyword in texto_lower:
+            return set_session_lang(code)
+
+    nombres = ", ".join(f"{v} ({k})" for k, v in _LANG_NAMES.items() if k != "es")
+    return f"No reconocí el idioma. Podés pedir: {nombres}. O 'vuelve al español'."
+
+
 def skill_editar_proyecto(texto: str) -> str:
     """
     Edita o crea un archivo del proyecto activo usando un agente especializado.
@@ -4113,6 +4129,15 @@ _INTENTS: list[tuple] = [
                                                                                skill_leer_archivo, 0),
     (r"(?:lee|leer|analiza)\s+.+\.(?:pdf|docx|xlsx|pptx|txt|md|csv|png|jpg|jpeg)\b",
                                                                                skill_leer_archivo, 0),
+
+    # ── Cambio de idioma (explícito, usuario lo pide) ─────────
+    (r"(?:habla|háblame|responde?|cambia?|pon(?:te)?|usa)\s+(?:en|al?)\s+"
+     r"(?:inglés|ingles|english|francés|frances|french|portugués|portugues|"
+     r"portuguese|alemán|aleman|german|italiano|italian|ruso|russian|español|"
+     r"castellano|spanish)",
+                                                                               skill_cambiar_idioma, 0),
+    (r"(?:vuelve|regresa?|cambia?)\s+(?:al?\s+)?español",                     skill_cambiar_idioma, 0),
+    (r"(?:let'?s\s+)?(?:speak|talk)\s+in\s+\w+",                             skill_cambiar_idioma, 0),
 ]
 
 # Frases completas que indican búsqueda en tiempo real
@@ -4541,6 +4566,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_git_pr, "text"),
     "skill_leer_archivo": ("Convierte PDF/DOCX/XLSX/imágenes a Markdown y los muestra como contexto",
                         skill_leer_archivo, "text"),
+    "cambiar_idioma":   ("Cambiar el idioma de la sesión: inglés, francés, chino, ruso, alemán, portugués",
+                        skill_cambiar_idioma, "text"),
 }
 
 
