@@ -1,6 +1,6 @@
 # Nova — Estado del Proyecto y Roadmap
 > **Archivo único de contexto.** Cualquier agente que tome este proyecto lee esto primero.  
-> Última actualización: **2026-05-08 (sesión 3)**
+> Última actualización: **2026-05-08 (sesión 4)**
 
 ---
 
@@ -8,7 +8,7 @@
 
 ```
 Voz/STT/TTS      ████████████████████ 100%
-Memoria          ██████████████████░░  90%  (vault completo OK, falta daemon)
+Memoria          ████████████████████ 100%  (vault OK, daemon gestiona Qdrant)
 Código/Git       ████████████████████ 100%
 Docker/Deploy    ████████████████████ 100%
 HUD              ████████████████░░░░  80%  (falta modo pantalla completa)
@@ -20,7 +20,7 @@ OCR/Documentos   ████████████████████ 10
 Modo políglota   ████████████████████ 100%  (explícito: ES/EN/FR/PT/DE/RU/ZH)
 Cross-platform   ████░░░░░░░░░░░░░░░░  20%  (install.py + API key fix listo)
 Plugins/Web UI   ░░░░░░░░░░░░░░░░░░░░   0%
-Daemon           ████████████░░░░░░░░  60%  (TCP 7899, REPL integrado, falta HUD)
+Daemon           ████████████████████ 100%  (TCP 7899, REPL + HUD integrados)
 ```
 
 ---

@@ -931,6 +931,10 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                     caption = "Describe detalladamente lo que ves en esta imagen."
                 hud.put_state(status="THINKING", user_text=f"[imagen: {fname}]")
                 data_url = f"data:{mime};base64,{b64}"
+                if _daemon_client is not None:
+                    # Daemon no soporta visión — fallback elegante
+                    speak("Análisis de imágenes requiere router local, Señor. Inicie Nova sin daemon para usarlo.", hud)
+                    return
                 # Construir mensajes directamente — NO pasar por _build_messages
                 # que stripea las imágenes para APIs text-only
                 msgs = [{"role": "system", "content": router.system_prompt}]
@@ -973,45 +977,65 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
 
         log.debug("Tú [texto]: %s", text[:80])
         hud.put_state(status="THINKING")   # user_text ya fue logueado por _on_text_submit
-        nova_memory.save_turn("user", text)
+
+        # Skills siempre locales (independiente del daemon)
         skill_resp = skills.dispatch(text)
         if skill_resp:
             print(f"Auxiliar: {skill_resp}")
             hud.put_state(status="SKILL", response_text=skill_resp, model_info="[SKILL LOCAL]")
-            # Guardar en history para que el LLM tenga contexto de lo que se ejecutó
             history.append({"role": "user", "content": text})
             history.append({"role": "assistant", "content": skill_resp})
-            nova_memory.save_turn("assistant", skill_resp)
+            if _daemon_client is None:
+                nova_memory.save_turn("user", text)
+                nova_memory.save_turn("assistant", skill_resp)
             speak(skill_resp, hud)
             return
+
         history.append({"role": "user", "content": text})
-        # Buscar contexto web si hace falta
-        extra = ""
-        if skills.needs_web_search(text):
-            print("  [búsqueda web...]")
-            extra = skills.web_search_for_llm(text)
-        try:
-            msgs, resp_lang = _build_messages(history, router.system_prompt, extra)
-            result = router.route(msgs)
-            response = result["response"]
-            history.append({"role": "assistant", "content": response})
-            nova_memory.save_turn("assistant", response)
-            tier   = result.get("tier", "?")
-            model  = result.get("model", "?")
-            tokens = result.get("tokens_used", 0)
-            provider   = result.get("provider", "?")
-            budget_pct = result.get("budget_remaining_pct", 100.0)
-            model_info = f"Tier {tier} {TIER_LABELS.get(tier,'?')} | {model} | {tokens} tk"
-            print(f"Auxiliar: {response}")
-            hud.put_state(
-                status="SPEAKING", response_text=response, model_info=model_info,
-                tokens_used=tokens, provider=provider, budget_remaining_pct=budget_pct,
-            )
-            speak(response, hud, lang=resp_lang)
-        except Exception as e:
-            err = f"Error al procesar: {e}"
-            print(f"  [ERROR] {err}")
-            hud.put_state(status="IDLE", response_text=err)
+        if _daemon_client is None:
+            nova_memory.save_turn("user", text)
+
+        # ── LLM via daemon o router local ─────────────────────
+        if _daemon_client is not None:
+            try:
+                response = _daemon_client.chat(text, session="hud")
+                history.append({"role": "assistant", "content": response})
+                print(f"Auxiliar: {response}")
+                hud.put_state(status="SPEAKING", response_text=response, model_info="[DAEMON]")
+                speak(response, hud, lang=_SESSION_LANG)
+            except Exception as e:
+                err = f"Error daemon: {e}"
+                print(f"  [ERROR] {err}")
+                history.pop()
+                hud.put_state(status="IDLE", response_text=err)
+        else:
+            # Buscar contexto web si hace falta
+            extra = ""
+            if skills.needs_web_search(text):
+                print("  [búsqueda web...]")
+                extra = skills.web_search_for_llm(text)
+            try:
+                msgs, resp_lang = _build_messages(history, router.system_prompt, extra)
+                result = router.route(msgs)
+                response = result["response"]
+                history.append({"role": "assistant", "content": response})
+                nova_memory.save_turn("assistant", response)
+                tier   = result.get("tier", "?")
+                model  = result.get("model", "?")
+                tokens = result.get("tokens_used", 0)
+                provider   = result.get("provider", "?")
+                budget_pct = result.get("budget_remaining_pct", 100.0)
+                model_info = f"Tier {tier} {TIER_LABELS.get(tier,'?')} | {model} | {tokens} tk"
+                print(f"Auxiliar: {response}")
+                hud.put_state(
+                    status="SPEAKING", response_text=response, model_info=model_info,
+                    tokens_used=tokens, provider=provider, budget_remaining_pct=budget_pct,
+                )
+                speak(response, hud, lang=resp_lang)
+            except Exception as e:
+                err = f"Error al procesar: {e}"
+                print(f"  [ERROR] {err}")
+                hud.put_state(status="IDLE", response_text=err)
 
     hud.set_text_callback(_on_text_input)
 
@@ -1183,59 +1207,81 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                 response_text=skill_resp,
                 model_info="[SKILL LOCAL]",
             )
-            nova_memory.save_turn("user",      user_input)
-            nova_memory.save_turn("assistant", skill_resp)
             history.append({"role": "user",      "content": user_input})
             history.append({"role": "assistant", "content": skill_resp})
+            if _daemon_client is None:
+                nova_memory.save_turn("user",      user_input)
+                nova_memory.save_turn("assistant", skill_resp)
             speak(skill_resp, hud)
             continue
 
-        # ── Búsqueda web si hace falta ────────────────────────
-        extra = ""
-        if skills.needs_web_search(user_input):
-            print("  [búsqueda web...]")
-            extra = skills.web_search_for_llm(user_input)
-
-        # ── LLM ───────────────────────────────────────────────
+        # ── LLM via daemon o router local ─────────────────────
         history.append({"role": "user", "content": user_input})
-        msgs, resp_lang = _build_messages(history, router.system_prompt, extra)
+        if _daemon_client is None:
+            nova_memory.save_turn("user", user_input)
 
-        try:
-            result = router.route(msgs)
-        except RuntimeError as e:
-            err = "Tuve un problema conectando con los modelos, Señor. Intente de nuevo."
-            print(f"  [error: {e}]")
-            print(f"Auxiliar: {err}")
-            history.pop()
-            hud.put_state(status="IDLE", response_text=err)
-            speak(err, hud)
-            continue
+        if _daemon_client is not None:
+            try:
+                response = _daemon_client.chat(user_input, session="hud")
+                history.append({"role": "assistant", "content": response})
+                print(f"Auxiliar: {response}")
+                hud.put_state(
+                    status="SPEAKING",
+                    response_text=response,
+                    model_info="[DAEMON]",
+                )
+                speak(response, hud, lang=_SESSION_LANG)
+            except Exception as e:
+                err = "Tuve un problema con el proceso central, Señor. Intente de nuevo."
+                print(f"  [error daemon: {e}]")
+                print(f"Auxiliar: {err}")
+                history.pop()
+                hud.put_state(status="IDLE", response_text=err)
+                speak(err, hud)
+        else:
+            # ── Búsqueda web si hace falta ────────────────────
+            extra = ""
+            if skills.needs_web_search(user_input):
+                print("  [búsqueda web...]")
+                extra = skills.web_search_for_llm(user_input)
 
-        tier     = result["tier"]
-        model    = result["model"]
-        tokens   = result["tokens_used"]
-        budget   = result["budget_remaining_pct"]
-        response = result["response"]
+            msgs, resp_lang = _build_messages(history, router.system_prompt, extra)
 
-        model_info = (
-            f"Tier {tier} {TIER_LABELS[tier]} | {model} | "
-            f"{tokens} tk | {budget:.0f}% budget"
-        )
-        print(f"  ┌ {model_info}")
-        print(f"  └ sesión: {result['session_tokens']} tokens")
-        print(f"Auxiliar: {response}")
+            try:
+                result = router.route(msgs)
+            except RuntimeError as e:
+                err = "Tuve un problema conectando con los modelos, Señor. Intente de nuevo."
+                print(f"  [error: {e}]")
+                print(f"Auxiliar: {err}")
+                history.pop()
+                hud.put_state(status="IDLE", response_text=err)
+                speak(err, hud)
+                continue
 
-        hud.put_state(
-            status="SPEAKING",
-            response_text=response,
-            model_info=model_info,
-        )
+            tier     = result["tier"]
+            model    = result["model"]
+            tokens   = result["tokens_used"]
+            budget   = result["budget_remaining_pct"]
+            response = result["response"]
 
-        nova_memory.save_turn("user",      user_input)
-        nova_memory.save_turn("assistant", response)
-        history.append({"role": "assistant", "content": response})
+            model_info = (
+                f"Tier {tier} {TIER_LABELS[tier]} | {model} | "
+                f"{tokens} tk | {budget:.0f}% budget"
+            )
+            print(f"  ┌ {model_info}")
+            print(f"  └ sesión: {result['session_tokens']} tokens")
+            print(f"Auxiliar: {response}")
 
-        speak(response, hud, lang=resp_lang)
+            hud.put_state(
+                status="SPEAKING",
+                response_text=response,
+                model_info=model_info,
+            )
+
+            nova_memory.save_turn("assistant", response)
+            history.append({"role": "assistant", "content": response})
+
+            speak(response, hud, lang=resp_lang)
 
     # ── Resumen final ─────────────────────────────────────────
     stats = router.get_session_summary()
