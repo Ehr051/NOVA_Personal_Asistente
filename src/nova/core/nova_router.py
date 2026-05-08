@@ -654,6 +654,108 @@ class NovaRouter:
             "budget_remaining_pct":  round(self.tracker.remaining_pct(), 1),
         }
 
+    def route_stream(
+        self,
+        messages:    list[dict],
+        force_tier:  int | None = None,
+        max_tokens:  int = 600,
+        temperature: float = 0.7,
+    ):
+        """
+        Generator: yields text chunks token-by-token.
+        Soporta todos los proveedores OpenAI-compat (Ollama, Groq, Cerebras,
+        Mistral, DeepSeek, OpenRouter, OpenClaw, custom).
+        Anthropic (SDK nativo) se salta por ahora — cae a route() como fallback.
+        Si ningún proveedor acepta stream, devuelve la respuesta completa en un único yield.
+        """
+        last_msg     = self._last_user(messages)
+        desired_tier = force_tier or ComplexityDetector.detect(last_msg)
+        actual_tier  = self._apply_budget_cap(desired_tier)
+
+        if len(messages) > 6:
+            messages = messages[-6:]
+        if not any(m.get("role") == "system" for m in messages):
+            full_messages = [{"role": "system", "content": self.system_prompt}] + messages
+        else:
+            full_messages = list(messages)
+
+        total_chars = sum(len(str(m.get("content", ""))) for m in full_messages)
+        if total_chars > 8000:
+            for m in full_messages:
+                if len(str(m.get("content", ""))) > 2000:
+                    m["content"] = str(m["content"])[:2000] + "... [truncado]"
+
+        for provider in self.provider_order:
+            client: OpenAI | None = None
+            model:  str   | None = None
+            extra_headers: dict  = {}
+
+            if provider == "ollama" and self._ollama_client and self._ollama_ready:
+                models = _with_tier1_fallback(self._ollama_models, actual_tier) or ["llama3.2:1b"]
+                client, model = self._ollama_client, models[0]
+            elif provider == "openclaw" and self._openclaw_client and self._openclaw_ready:
+                hints = _with_tier1_fallback(self._openclaw_models, actual_tier)
+                hint = hints[0] if hints else ""
+                client = self._openclaw_client
+                model = self._openclaw_agent_model
+                if hint:
+                    extra_headers = {"x-openclaw-model": hint}
+            elif provider == "groq" and self._groq_client:
+                models = _with_tier1_fallback(GROQ_MODELS, actual_tier)
+                client, model = self._groq_client, (models[0] if models else "llama-3.1-8b-instant")
+            elif provider == "cerebras" and self._cerebras_client:
+                models = _with_tier1_fallback(CEREBRAS_MODELS, actual_tier)
+                client, model = self._cerebras_client, (models[0] if models else "llama3.1-8b")
+            elif provider == "mistral" and self._mistral_client:
+                models = _with_tier1_fallback(MISTRAL_MODELS, actual_tier)
+                client, model = self._mistral_client, (models[0] if models else "mistral-small-latest")
+            elif provider == "codestral" and self._codestral_client:
+                models = _with_tier1_fallback(CODESTRAL_MODELS, actual_tier)
+                client, model = self._codestral_client, (models[0] if models else "codestral-latest")
+            elif provider == "deepseek" and self._deepseek_client:
+                models = _with_tier1_fallback(DEEPSEEK_MODELS, actual_tier)
+                client, model = self._deepseek_client, (models[0] if models else "deepseek-v4-flash")
+            elif provider == "openrouter" and self._or_client:
+                models = _with_tier1_fallback(OPENROUTER_MODELS, actual_tier)
+                client, model = self._or_client, (models[0] if models else "google/gemma-3-27b-it:free")
+                extra_headers = {
+                    "HTTP-Referer": "https://github.com/nova-assistant",
+                    "X-Title": "NOVA Personal Assistant",
+                }
+            elif provider == "anthropic":
+                continue  # SDK nativo no se integra aquí — fallback al final
+            else:
+                custom = next(
+                    (c for c in self._custom_clients if c["name"].lower() == provider), None
+                )
+                if custom:
+                    client, model = custom["client"], custom["model"]
+
+            if client is None or model is None:
+                continue
+
+            try:
+                started = False
+                for chunk in self._call_stream(client, provider, model,
+                                               full_messages, max_tokens, temperature,
+                                               extra_headers or None):
+                    started = True
+                    yield chunk
+                if started:
+                    self._last_provider = provider
+                    return
+            except Exception as exc:
+                logger.debug("[Stream] %s/%s falló: %s", provider, model, str(exc)[:80])
+
+        # Fallback: ningún proveedor acepta stream → respuesta completa en un yield
+        try:
+            result = self.route(messages, force_tier=force_tier,
+                                max_tokens=max_tokens, temperature=temperature)
+            self._last_provider = result.get("provider", "?")
+            yield result.get("response", "")
+        except Exception as exc:
+            yield f"Error: {exc}"
+
     def get_session_summary(self) -> dict:
         return self.tracker.summary()
 
@@ -1219,6 +1321,40 @@ class NovaRouter:
             text = "Orden procesada, Señor."
         tokens = r.usage.total_tokens if r.usage else 0
         return text, tokens
+
+    def _call_stream(
+        self,
+        client: OpenAI,
+        provider: str,
+        model: str,
+        messages: list[dict],
+        max_tokens: int,
+        temperature: float,
+        extra_headers: dict | None = None,
+    ):
+        """Generator: yields text chunks from a streaming completions call."""
+        headers: dict = {}
+        if provider == "OpenRouter":
+            headers.update({
+                "HTTP-Referer": "https://github.com/nova-assistant",
+                "X-Title": "NOVA Personal Assistant",
+            })
+        if extra_headers:
+            headers.update(extra_headers)
+
+        actual_messages = messages
+        if provider == "Ollama" and self._should_disable_thinking(model):
+            actual_messages = self._disable_thinking_in_messages(messages)
+
+        extra = {"extra_headers": headers} if headers else {}
+        stream = client.chat.completions.create(
+            model=model, messages=actual_messages,
+            max_tokens=max_tokens, temperature=temperature,
+            stream=True, **extra,
+        )
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
 
     def _call_anthropic(
         self,

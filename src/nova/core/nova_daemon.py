@@ -124,6 +124,47 @@ class NovaDaemon:
                      if self._router and self._router is not False else "none")
         return {"ok": True, "version": "3.1", "providers": providers}
 
+    def _build_msgs(self, message: str, history: list[dict], mem_ctx: str) -> list[dict]:
+        """Construye la lista de mensajes para el LLM."""
+        system = self._router.system_prompt
+        if mem_ctx:
+            system += f"\n\n[Memoria relevante]\n{mem_ctx}"
+        msgs: list[dict] = [{"role": "system", "content": system}]
+        for m in history[-20:]:
+            if m.get("role") in ("user", "assistant") and m.get("content"):
+                msgs.append({"role": m["role"], "content": str(m["content"])})
+        msgs.append({"role": "user", "content": message})
+        return msgs
+
+    def _run_skill(self, message: str) -> str | None:
+        try:
+            from nova.tools.nova_skills import dispatch
+            return dispatch(message)
+        except Exception:
+            return None
+
+    def _mem_ctx(self, message: str) -> str:
+        if not (self._memory and self._memory is not False):
+            return ""
+        try:
+            return self._memory.search_context(message, limit=4) or ""
+        except Exception:
+            return ""
+
+    def _save_turn(self, history: list[dict], message: str, response: str) -> None:
+        with self._lock:
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": response})
+            max_h = int(os.getenv("MAX_HISTORY", "20")) * 2
+            if len(history) > max_h:
+                del history[:-max_h]
+        if self._memory and self._memory is not False:
+            try:
+                self._memory.save_turn("user", message)
+                self._memory.save_turn("assistant", response)
+            except Exception:
+                pass
+
     def _handle_chat(self, req: dict) -> dict:
         self._init_router()
         self._init_memory()
@@ -134,55 +175,50 @@ class NovaDaemon:
         message    = req.get("message", "")
         history    = self._get_history(session_id)
 
-        # Intentar dispatch de skills primero
-        try:
-            from nova.tools.nova_skills import dispatch
-            skill_result = dispatch(message)
-        except Exception:
-            skill_result = None
-
+        skill_result = self._run_skill(message)
         if skill_result is not None:
             return {"ok": True, "result": skill_result, "skill": True}
 
-        # Buscar contexto de memoria
-        mem_ctx = ""
-        if self._memory and self._memory is not False:
-            try:
-                mem_ctx = self._memory.search_context(message, limit=4)
-            except Exception:
-                pass
-
-        # Construir messages para el LLM
-        from nova.lang.novaesp import _build_messages
+        msgs = self._build_msgs(message, history, self._mem_ctx(message))
         try:
-            msgs, lang = _build_messages(message, history, vault_ctx="", mem_ctx=mem_ctx)
-        except Exception as e:
-            return {"ok": False, "error": f"build_messages: {e}"}
-
-        # Llamar al LLM
-        try:
-            response = self._router.chat(msgs)
+            result   = self._router.route(msgs)
+            response = result.get("response", "Sin respuesta.")
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-        # Actualizar historia
-        with self._lock:
-            history.append({"role": "user", "content": message})
-            history.append({"role": "assistant", "content": response})
-            # Limitar historia a MAX_HISTORY turnos
-            max_h = int(os.getenv("MAX_HISTORY", "20")) * 2
-            if len(history) > max_h:
-                del history[:-max_h]
-
-        # Guardar en memoria
-        if self._memory and self._memory is not False:
-            try:
-                self._memory.save_turn("user", message)
-                self._memory.save_turn("assistant", response)
-            except Exception:
-                pass
-
+        self._save_turn(history, message, response)
         return {"ok": True, "result": response, "skill": False}
+
+    def _handle_chat_stream(self, req: dict):
+        """Generator: yields ndjson dicts (chunks + final done)."""
+        self._init_router()
+        self._init_memory()
+        if not self._router:
+            yield {"ok": False, "done": True, "error": "Router no disponible"}
+            return
+
+        session_id = req.get("session", "default")
+        message    = req.get("message", "")
+        history    = self._get_history(session_id)
+
+        skill_result = self._run_skill(message)
+        if skill_result is not None:
+            yield {"ok": True, "done": True, "result": skill_result, "skill": True}
+            return
+
+        msgs = self._build_msgs(message, history, self._mem_ctx(message))
+        chunks: list[str] = []
+        try:
+            for chunk in self._router.route_stream(msgs):
+                chunks.append(chunk)
+                yield {"ok": True, "chunk": chunk}
+        except Exception as e:
+            yield {"ok": False, "done": True, "error": str(e)}
+            return
+
+        response = "".join(chunks)
+        self._save_turn(history, message, response)
+        yield {"ok": True, "done": True, "result": response, "skill": False}
 
     def _handle_remember(self, req: dict) -> dict:
         self._init_memory()
@@ -254,7 +290,18 @@ class NovaDaemon:
                     continue
 
                 msg_type = req.get("type", "")
-                handler  = self._HANDLERS.get(msg_type)
+
+                # chat_stream: protocolo multi-línea (N chunks + done)
+                if msg_type == "chat_stream":
+                    try:
+                        for obj in self._handle_chat_stream(req):
+                            _send(conn, obj)
+                    except Exception as e:
+                        log.exception("[Daemon] Error en chat_stream")
+                        _send(conn, {"ok": False, "done": True, "error": str(e)})
+                    continue
+
+                handler = self._HANDLERS.get(msg_type)
                 if handler is None:
                     _send(conn, {"ok": False, "error": f"Tipo desconocido: {msg_type}"})
                     continue

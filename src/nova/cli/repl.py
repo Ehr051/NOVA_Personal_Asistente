@@ -684,10 +684,16 @@ def _route_to_llm(text: str) -> str:
     if _daemon_client is not None:
         try:
             session_id = _session_state.get("id", "repl")
-            response = _daemon_client.chat(text, session=session_id)
+            chunks: list[str] = []
+            print()
+            for chunk in _daemon_client.chat_stream(text, session=session_id):
+                print(chunk, end="", flush=True)
+                chunks.append(chunk)
+            print()
+            response = "".join(chunks)
             history.append({"role": "user", "content": text})
             history.append({"role": "assistant", "content": response})
-            return response
+            return ""  # ya impreso token a token
         except Exception as e:
             log.warning("[REPL] Daemon falló, usando router local: %s", e)
             # Fall through to direct router below
@@ -753,9 +759,15 @@ def _route_to_llm(text: str) -> str:
     messages = [system_msg] + list(history)
 
     try:
-        result = _router.route(messages)
-        response = result.get("response", "Sin respuesta.")
-        provider = result.get("provider", "?")
+        # Streaming: imprime tokens a medida que llegan
+        response_chunks: list[str] = []
+        print()
+        for chunk in _router.route_stream(messages):
+            print(chunk, end="", flush=True)
+            response_chunks.append(chunk)
+        print()
+        response = "".join(response_chunks)
+        provider = getattr(_router, "_last_provider", "?")
         history.append({"role": "assistant", "content": response})
 
         # Guardar interacción en memoria neuronal
@@ -765,7 +777,8 @@ def _route_to_llm(text: str) -> str:
             except Exception:
                 pass
 
-        return f"{response}\n\n[via {provider}]"
+        print(f"  [via {provider}]")
+        return ""  # ya impreso token a token
     except Exception as e:
         return f"Error LLM: {e}"
 
@@ -892,7 +905,8 @@ def run() -> int:
             continue
 
         response = _route_to_llm(line)
-        print(response)
+        if response:  # empty → ya fue impreso token a token (streaming)
+            print(response)
 
 
 # Alias so `from nova.cli.repl import main` also works

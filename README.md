@@ -1,6 +1,6 @@
 # Nova — Asistente Personal Inteligente
 
-Nova es un asistente personal avanzado con control por voz, visión, memoria neuronal, automatización y agentes especializados. Funciona en **macOS, Windows y Linux**.
+Nova es un asistente personal avanzado con control por voz, visión, memoria neuronal, automatización y agentes especializados. Funciona en **macOS, Windows y Linux**. Respuestas en streaming token a token, daemon multi-sesión, y completamente offline con Ollama.
 
 ---
 
@@ -24,18 +24,24 @@ El wizard te pide las API keys durante la instalación. Podés dejar cualquier c
 ```bash
 git clone https://github.com/Ehr051/NOVA_Personal_Asistente.git
 cd NOVA_Personal_Asistente
-python install.py        # instala dependencias + pide API keys + crea lanzador en Escritorio
+python install.py        # crea .venv, instala deps, pide API keys, crea lanzador en Escritorio
 ```
 
-**macOS:**
+**macOS / Linux:**
 ```bash
-./launch_nova.sh
+./launch_nova.sh         # activa .venv automáticamente
 ```
-**Windows / Linux:**
+**Windows:**
 ```bash
-python main.py
+launch_nova.bat          # activa .venv automáticamente
 # o desde cualquier consola:
 nova
+```
+
+### Desinstalar
+
+```bash
+python install.py --uninstall   # elimina .venv, lanzadores del escritorio, PATH en Windows
 ```
 
 ---
@@ -59,6 +65,8 @@ Con al menos una key Nova ya funciona. Ollama es opcional pero habilita modo com
 ## Características
 
 - **Control por voz** — wake word "Nova", barge-in para interrumpir, enrollado de speaker personalizado
+- **Streaming token a token** — el REPL imprime la respuesta en tiempo real, como ChatGPT
+- **Daemon multi-sesión** — proceso central TCP (puerto 7899) que arranca automáticamente; REPL y HUD se conectan como clientes, eliminando conflictos de Qdrant
 - **Visión** — analiza cámara y pantalla vía Ollama local o OpenRouter como fallback
 - **185 agentes especializados** — Firmware Engineer, Software Architect, AI Engineer, Backend Architect y más, ejecutados con proveedores gratuitos
 - **Modelado 3D en Blender** — genera scripts Python, los envía al addon MCP y auto-evalúa el resultado con visión
@@ -67,6 +75,7 @@ Con al menos una key Nova ya funciona. Ollama es opcional pero habilita modo com
 - **Automatización** — Google Calendar, Gmail, Drive, n8n, Telegram, volumen, apps, mouse/teclado
 - **Skills sin API key** — traducción, crypto, tipo de cambio, feriados
 - **Cross-platform** — macOS, Windows 10+, Linux
+- **`.venv` aislado** — `install.py` crea un entorno virtual dedicado; los paquetes de Nova no afectan el sistema
 
 ---
 
@@ -111,8 +120,11 @@ nova> recuerda que prefiero Python sobre JavaScript
 
 ```
 src/nova/
-├── cli/repl.py                  REPL principal
-├── core/nova_router.py          Router: Ollama → Groq → Cerebras → Mistral → OpenRouter
+├── cli/repl.py                  REPL principal (streaming token a token)
+├── core/
+│   ├── nova_router.py           Router: Ollama → Groq → Cerebras → Mistral → OpenRouter
+│   ├── nova_daemon.py           Daemon TCP (puerto 7899) — singleton router + Qdrant
+│   └── nova_client.py           Cliente thin: chat(), chat_stream(), ping(), ensure_daemon()
 ├── lang/novaesp.py              HUD + loop de voz
 ├── platform/                   Adaptadores por OS (macOS / Windows / Linux)
 ├── connectors/
@@ -124,6 +136,15 @@ src/nova/
     └── nova_neuro_memory.py     Mem0 + Qdrant + embeddings locales
 ```
 
+### Variables de entorno opcionales
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `NOVA_API_TIMEOUT` | `10` | Timeout en segundos por proveedor LLM |
+| `NOVA_DAEMON_PORT` | `7899` | Puerto TCP del daemon |
+| `NOVA_LOG_LEVEL` | `WARNING` | Nivel de log (`DEBUG`, `INFO`, `WARNING`) |
+| `MAX_HISTORY` | `20` | Turnos de historial en memoria por sesión |
+
 ---
 
-*Versión 3.1 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*
+*Versión 3.7 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*

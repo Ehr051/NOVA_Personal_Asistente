@@ -71,6 +71,17 @@ if __name__ == "__main__":
         except ImportError:
             pass  # python-dotenv no instalado — continuar igual
 
+        # Arrancar daemon antes del HUD para evitar conflicto Qdrant cross-thread
+        try:
+            from nova.core.nova_client import NovaDaemonClient
+            _dc = NovaDaemonClient(auto_start=True)
+            if _dc.ensure_daemon(wait=6.0):
+                print("  [Daemon] Listo — puerto", os.getenv("NOVA_DAEMON_PORT", "7899"))
+            else:
+                print("  [Daemon] No disponible — usando router local")
+        except Exception:
+            pass
+
         from nova.lang.novaesp import main as esp_main
         esp_main()
 

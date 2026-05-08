@@ -1,6 +1,6 @@
 # Nova — Estado del Proyecto y Roadmap
 > **Archivo único de contexto.** Cualquier agente que tome este proyecto lee esto primero.  
-> Última actualización: **2026-05-08 (sesión 5)**
+> Última actualización: **2026-05-08 (sesión 6)**
 
 ---
 
@@ -18,9 +18,10 @@ Logging          ███████████████████░  9
 Telegram full    ████████████████████ 100%  (polling + webhook n8n)
 OCR/Documentos   ████████████████████ 100%  (markitdown + pytesseract)
 Modo políglota   ████████████████████ 100%  (explícito: ES/EN/FR/PT/DE/RU/ZH)
-Cross-platform   ████████░░░░░░░░░░░░  40%  (installer wizard completo Win/Mac/Linux)
+Cross-platform   ████████░░░░░░░░░░░░  40%  (installer .venv + uninstall)
+Streaming LLM    ████████████████████ 100%  (REPL + daemon, token-by-token)
 Plugins/Web UI   ░░░░░░░░░░░░░░░░░░░░   0%
-Daemon           ████████████████████ 100%  (TCP 7899, REPL + HUD integrados)
+Daemon           ████████████████████ 100%  (TCP 7899, auto-launch, streaming)
 ```
 
 ---
@@ -94,7 +95,9 @@ Daemon           ████████████████████ 10
 | Telegram Receive | `src/nova/connectors/nova_telegram_server.py` | ✅ |
 | Plugin system | — | ❌ pendiente |
 | Web UI | — | ❌ pendiente |
-| Daemon/multi-sesión | `src/nova/core/nova_daemon.py` + `nova_client.py` | 🔄 60% |
+| Daemon/multi-sesión | `src/nova/core/nova_daemon.py` + `nova_client.py` | ✅ |
+| Streaming LLM | `nova_router.route_stream()` + daemon `chat_stream` | ✅ |
+| .venv + uninstall | `install.py` | ✅ |
 
 ---
 
@@ -112,13 +115,22 @@ Daemon           ████████████████████ 10
 | — | **Memoria/RAG** | ✅ `nova_rag_obsidian.py` → `legacy/`; vault completo en contexto (todas las carpetas) |
 | — | **Requirements + CI** | ✅ `requirements.txt` completo, `install.py` cross-platform, GitHub Actions release por tag |
 
+### ✅ Completado (sesión 6)
+
+| # | Feature | Estado |
+|---|---|---|
+| — | **Daemon auto-launch** | ✅ `main.py` arranca daemon antes del HUD; `NovaDaemonClient(auto_start=True).ensure_daemon(wait=6s)` |
+| — | **Streaming LLM — REPL** | ✅ `route_stream()` en router + `chat_stream()` en daemon + client; REPL imprime token a token |
+| — | **Fix daemon `_handle_chat`** | ✅ Corregido: `router.chat()` → `router.route()`, `_build_messages` firma incorrecta → construido inline |
+| — | **.venv isolation** | ✅ `install.py` crea `.venv/`, launchers activan venv automáticamente |
+| — | **`--uninstall`** | ✅ `python install.py --uninstall` elimina `.venv`, lanzadores, PATH Windows |
+
 ### 🔴 Alta prioridad — siguiente
 
 | # | Feature | Qué hay que hacer |
 |---|---|---|
-| — | **Daemon multi-sesión** | TCP 7899 listo + REPL integrado. Falta: integrar HUD (`novaesp.py`) para que use `NovaDaemonClient` en lugar de instanciar router local. |
-| — | **Qdrant SQLite cross-thread** | `__del__` de QdrantClient se llama desde GC thread ≠ creation thread. Workaround en `close()` no basta. Fix real: monkey-patch `QdrantClient.__del__` tras `close()`. |
-| — | **Tests suite ampliada** | `python3.10 -m pytest -q` pasa ~13/4skip. Añadir smoke tests para LSP, OCR, Docker, políglota. |
+| — | **Qdrant SQLite cross-thread** | `__del__` de QdrantClient se llama desde GC thread ≠ creation thread. Fix real: monkey-patch `QdrantClient.__del__` tras `close()`. |
+| — | **Tests suite ampliada** | `python3.10 -m pytest -q` pasa ~13/4skip. Añadir smoke tests para LSP, OCR, daemon/streaming, políglota. |
 
 ### 🟡 Media prioridad
 
@@ -159,7 +171,7 @@ Daemon           ████████████████████ 10
 | Web search mientras codea | parcial | parcial | ✗ | ✅ |
 | Feedback loop ejecución | ✅ | ✗ | ✗ | ✅ |
 | LSP semántico | ✅ | ✅ | ✅ | ✅ |
-| Multi-sesión / daemon | ✅ | ✅ | ✅ | ❌ pendiente |
+| Multi-sesión / daemon | ✅ | ✅ | ✅ | ✅ auto-launch + streaming |
 
 ---
 
