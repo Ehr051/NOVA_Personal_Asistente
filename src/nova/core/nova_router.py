@@ -551,6 +551,24 @@ class NovaRouter:
             self._anthropic_client = _anthropic_sdk.Anthropic(api_key=anthropic_key)
             self._append_active_provider("Anthropic")
 
+        # ── Custom providers (CUSTOM_PROVIDERS env var) ──────────
+        self._custom_clients: list[dict] = []
+        custom_raw = os.getenv("CUSTOM_PROVIDERS", "").strip()
+        for entry in (e.strip() for e in custom_raw.split(",") if e.strip()):
+            parts = entry.split("|", 3)
+            if len(parts) == 4:
+                name, base_url, api_key, model = [p.strip() for p in parts]
+                if name and base_url and not _is_placeholder(api_key):
+                    try:
+                        client = OpenAI(base_url=base_url, api_key=api_key)
+                        self._custom_clients.append({
+                            "name": name, "client": client,
+                            "model": model, "base_url": base_url, "api_key": api_key,
+                        })
+                        self._append_active_provider(name)
+                    except Exception as e:
+                        logger.warning("[Router] Custom provider %s: %s", name, e)
+
         if not self._has_any_provider():
             raise EnvironmentError(
                 "No hay proveedores configurados.\n"
@@ -779,6 +797,7 @@ class NovaRouter:
             self._deepseek_client is not None,
             self._or_client is not None,
             self._anthropic_client is not None,
+            bool(self._custom_clients),
         ])
 
     def _resolve_ollama_base(self) -> str:
@@ -857,9 +876,10 @@ class NovaRouter:
         raw = _csv_env("ROUTER_PROVIDER_ORDER", "ollama,openclaw,groq,cerebras,mistral,openrouter")
         allowed = {"ollama", "openclaw", "groq", "cerebras", "mistral", "codestral",
                    "deepseek", "openrouter", "anthropic"}
+        for c in self._custom_clients:
+            allowed.add(c["name"].lower())
         order = [x.lower() for x in raw if x.lower() in allowed]
-        # Mapa proveedor → cliente disponible
-        _avail_map = {
+        _avail_map: dict[str, bool] = {
             "ollama":     self._ollama_ready,
             "openclaw":   self._openclaw_ready,
             "groq":       self._groq_client is not None,
@@ -870,6 +890,8 @@ class NovaRouter:
             "openrouter": self._or_client is not None,
             "anthropic":  self._anthropic_client is not None,
         }
+        for c in self._custom_clients:
+            _avail_map[c["name"].lower()] = True
         available = [p for p in order if _avail_map.get(p, False)]
         if not available:
             available = [p for p, ok in _avail_map.items() if ok]
@@ -1065,6 +1087,21 @@ class NovaRouter:
                         "extra_headers": {},
                     })
 
+            else:
+                custom = next(
+                    (c for c in self._custom_clients if c["name"].lower() == provider),
+                    None,
+                )
+                if custom:
+                    attempts.append({
+                        "client": custom["client"],
+                        "provider": custom["name"],
+                        "model": custom["model"],
+                        "display_model": f"{custom['name']}/{custom['model']}",
+                        "billing_model": custom["model"],
+                        "extra_headers": {},
+                    })
+
         # Ordenar por score de estadísticas (mejores primero)
         attempts.sort(key=lambda x: self.stats_tracker.score(x["billing_model"]), reverse=True)
 
@@ -1207,6 +1244,85 @@ class NovaRouter:
         text = resp.content[0].text.strip() if resp.content else "Orden procesada, Señor."
         tokens = (resp.usage.input_tokens or 0) + (resp.usage.output_tokens or 0)
         return text, tokens
+
+    @staticmethod
+    def _write_env_var(key: str, value: str) -> bool:
+        import re as _re
+        try:
+            from dotenv import find_dotenv
+            env_path = find_dotenv(usecwd=True) or find_dotenv()
+        except Exception:
+            env_path = ""
+        if not env_path:
+            base = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))
+            )))
+            env_path = os.path.join(base, ".env")
+        try:
+            if os.path.exists(env_path):
+                with open(env_path, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+            else:
+                content = ""
+            pattern = rf"^{_re.escape(key)}=.*$"
+            if _re.search(pattern, content, _re.MULTILINE):
+                content = _re.sub(pattern, f"{key}={value}", content, flags=_re.MULTILINE)
+            else:
+                content = content.rstrip("\n") + f"\n{key}={value}\n"
+            with open(env_path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            return True
+        except Exception as exc:
+            logger.warning("[Router] _write_env_var %s: %s", key, exc)
+            return False
+
+    def add_custom_provider(
+        self, name: str, base_url: str, api_key: str, model: str
+    ) -> str:
+        if _is_placeholder(api_key):
+            return f"La API key para '{name}' parece inválida o es un placeholder."
+        try:
+            client = OpenAI(base_url=base_url, api_key=api_key)
+            client.models.list()
+        except Exception as exc:
+            probe_err = str(exc)[:120]
+            try:
+                client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "user", "content": "hi"}],
+                    max_tokens=4,
+                )
+            except Exception as exc2:
+                return (
+                    f"No pude conectar con el proveedor '{name}'. "
+                    f"Error probe: {probe_err} | {str(exc2)[:80]}"
+                )
+        existing = next(
+            (i for i, c in enumerate(self._custom_clients) if c["name"].lower() == name.lower()),
+            None,
+        )
+        entry = {"name": name, "client": client, "model": model,
+                 "base_url": base_url, "api_key": api_key}
+        if existing is not None:
+            self._custom_clients[existing] = entry
+        else:
+            self._custom_clients.append(entry)
+            if name.lower() not in [p.lower() for p in self.provider_order]:
+                self.provider_order.append(name.lower())
+            self._append_active_provider(name)
+
+        existing_entries = []
+        for c in self._custom_clients:
+            existing_entries.append(f"{c['name']}|{c['base_url']}|{c['api_key']}|{c['model']}")
+        serialized = ",".join(existing_entries)
+        self._write_env_var("CUSTOM_PROVIDERS", serialized)
+        os.environ["CUSTOM_PROVIDERS"] = serialized
+
+        action = "actualizado" if existing is not None else "agregado"
+        return (
+            f"Proveedor '{name}' {action} correctamente. "
+            f"Modelo: {model}. Proveedores activos: {self._active_provider}"
+        )
 
     def get_model_stats(self) -> dict:
         """Retorna las estadísticas de uso de los modelos."""

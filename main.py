@@ -31,26 +31,49 @@ sys.path.insert(0, os.path.join(_BASE_DIR, "src"))
 _ENV_PATH = os.path.join(_BASE_DIR, ".env")
 
 
-if __name__ == "__main__":
-    # Cargar .env desde la ubicación correcta (junto al ejecutable)
+def _show_error(title: str, msg: str) -> None:
+    """Muestra el error en consola y en MessageBox (Windows), luego espera Enter."""
+    print(f"\n{'─'*60}\n  {title}\n{'─'*60}\n{msg}\n{'─'*60}")
+    log_path = os.path.join(_BASE_DIR, "nova_crash.log")
     try:
-        from dotenv import load_dotenv
-        if os.path.exists(_ENV_PATH):
-            load_dotenv(_ENV_PATH)
-        else:
-            print("\n" + "─" * 60)
-            print("  Nova — Falta configuración")
-            print("─" * 60)
-            print("  No se encontró .env.")
-            print("  Ejecutá el instalador primero:\n")
-            print("    python install.py\n")
-            print("  Luego volvé a abrir Nova.")
-            print("─" * 60)
-            if sys.platform == "win32":
-                input("\n  Presioná Enter para cerrar...")
-            sys.exit(1)
-    except ImportError:
-        pass  # python-dotenv no instalado — continuar igual
+        with open(log_path, "w", encoding="utf-8") as _f:
+            _f.write(f"{title}\n\n{msg}\n")
+        print(f"\n  Log guardado en: {log_path}")
+    except Exception:
+        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                0, f"{msg}\n\nLog: {log_path}", f"Nova — {title}", 0x10
+            )
+        except Exception:
+            pass
+        input("\n  Presioná Enter para cerrar...")
 
-    from nova.lang.novaesp import main as esp_main
-    esp_main()
+
+if __name__ == "__main__":
+    import traceback
+    try:
+        try:
+            from dotenv import load_dotenv
+            if os.path.exists(_ENV_PATH):
+                load_dotenv(_ENV_PATH)
+            else:
+                _show_error(
+                    "Falta configuración",
+                    "No se encontró .env.\n"
+                    "Ejecutá el instalador primero:\n"
+                    "  python install.py\n"
+                    "Luego volvé a abrir Nova."
+                )
+                sys.exit(1)
+        except ImportError:
+            pass  # python-dotenv no instalado — continuar igual
+
+        from nova.lang.novaesp import main as esp_main
+        esp_main()
+
+    except Exception:
+        _show_error("Error al iniciar Nova", traceback.format_exc())
+        sys.exit(1)

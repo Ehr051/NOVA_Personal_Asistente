@@ -17,6 +17,8 @@ AppUpdatesURL={#AppURL}/releases
 DefaultDirName={autopf}\Nova
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
+DisableDirPage=no
+DisableProgramGroupPage=yes
 OutputDir=installer_output
 OutputBaseFilename=Nova-Setup
 SetupIconFile=..\assets\nova.ico
@@ -45,120 +47,129 @@ Source: "..\README.md";       DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{group}\Nova";             Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\nova.ico"
 Name: "{group}\Desinstalar Nova"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\Nova";     Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\nova.ico"; Tasks: desktopicon
+Name: "{commondesktop}\Nova";     Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\nova.ico"; Tasks: desktopicon; WorkingDir: "{app}"
 
 [Registry]
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: NeedsAddPath(ExpandConstant('{app}'))
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Iniciar Nova ahora"; Flags: nowait postinstall skipifsilent
+; Lanzar con cmd /k para que la ventana quede abierta si Nova crashea
+Filename: "cmd.exe"; Parameters: "/k ""{app}\{#AppExeName}"""; Description: "Iniciar Nova ahora"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var
-  APIKeyPage: TWizardPage;
-  GroqEdit:        TEdit;
-  OpenRouterEdit:  TEdit;
-  AnthropicEdit:   TEdit;
-  GroqLabel:       TLabel;
-  OpenRouterLabel: TLabel;
-  AnthropicLabel:  TLabel;
-  NoteLabel:       TLabel;
+  LLMPage:           TWizardPage;
+  IntegPage:         TWizardPage;
+
+  GroqEdit:          TEdit;
+  OpenRouterEdit:    TEdit;
+  AnthropicEdit:     TEdit;
+  CerebrasEdit:      TEdit;
+  MistralEdit:       TEdit;
+  DeepSeekEdit:      TEdit;
+
+  TelegramTokenEdit: TEdit;
+  TelegramChatEdit:  TEdit;
+  ObsidianEdit:      TEdit;
+  GitHubEdit:        TEdit;
+
+// ── Helper: añade un par Label+Edit a una página ──────────────────────────────
+procedure AddField(Page: TWizardPage; Caption: String; var EditCtrl: TEdit; var Y: Integer);
+var
+  Lbl: TLabel;
+begin
+  Lbl := TLabel.Create(WizardForm);
+  Lbl.Parent  := Page.Surface;
+  Lbl.Caption := Caption;
+  Lbl.Top     := Y;
+  Lbl.Left    := 0;
+  Lbl.AutoSize := True;
+  Y := Y + 16;
+
+  EditCtrl := TEdit.Create(WizardForm);
+  EditCtrl.Parent := Page.Surface;
+  EditCtrl.Top    := Y;
+  EditCtrl.Left   := 0;
+  EditCtrl.Width  := Page.SurfaceWidth;
+  EditCtrl.Text   := '';
+  Y := Y + 26;
+end;
 
 // ── Página personalizada de API Keys ──────────────────────────────────────────
 procedure InitializeWizard;
 var
-  Y: Integer;
+  Y:    Integer;
+  Note: TLabel;
 begin
-  APIKeyPage := CreateCustomPage(wpSelectTasks,
-    'Configurar API Keys',
-    'Ingresá tus claves de acceso a los modelos de lenguaje.');
+  // ── Página 1: LLM Providers ─────────────────────────────────────────────────
+  LLMPage := CreateCustomPage(wpSelectTasks,
+    'Proveedores LLM',
+    'Ingresá las claves de los modelos de lenguaje que querés usar.');
 
   Y := 0;
 
-  NoteLabel := TLabel.Create(WizardForm);
-  NoteLabel.Parent := APIKeyPage.Surface;
-  NoteLabel.Caption :=
-    'Podés dejar cualquier campo vacío y configurarlo después diciendo:' + #13#10 +
-    '"nova, mi api de groq es gsk_xxxx"';
-  NoteLabel.AutoSize := True;
-  NoteLabel.Top := Y;
-  NoteLabel.Left := 0;
-  NoteLabel.Width := APIKeyPage.SurfaceWidth;
-  Y := Y + 36;
+  Note := TLabel.Create(WizardForm);
+  Note.Parent  := LLMPage.Surface;
+  Note.Caption :=
+    'Al menos uno recomendado. Groq y Cerebras son gratis.' + #13#10 +
+    'Dejá vacío cualquier campo para configurarlo después.';
+  Note.AutoSize := True;
+  Note.Top  := Y;
+  Note.Left := 0;
+  Note.Width := LLMPage.SurfaceWidth;
+  Y := Y + 34;
 
-  // Groq
-  GroqLabel := TLabel.Create(WizardForm);
-  GroqLabel.Parent := APIKeyPage.Surface;
-  GroqLabel.Caption := 'Groq API Key  (gratis: console.groq.com)';
-  GroqLabel.Top := Y;
-  GroqLabel.Left := 0;
-  GroqLabel.AutoSize := True;
-  Y := Y + 18;
+  AddField(LLMPage, 'Groq API Key  (gratis: console.groq.com)',           GroqEdit,       Y);
+  AddField(LLMPage, 'OpenRouter API Key  (gratis: openrouter.ai)',         OpenRouterEdit, Y);
+  AddField(LLMPage, 'Anthropic API Key  (opcional, de pago)',              AnthropicEdit,  Y);
+  AddField(LLMPage, 'Cerebras API Key  (gratis: inference.cerebras.ai)',   CerebrasEdit,   Y);
+  AddField(LLMPage, 'Mistral API Key  (free tier: console.mistral.ai)',    MistralEdit,    Y);
+  AddField(LLMPage, 'DeepSeek API Key  (barato: platform.deepseek.com)',   DeepSeekEdit,   Y);
 
-  GroqEdit := TEdit.Create(WizardForm);
-  GroqEdit.Parent := APIKeyPage.Surface;
-  GroqEdit.Top := Y;
-  GroqEdit.Left := 0;
-  GroqEdit.Width := APIKeyPage.SurfaceWidth;
-  GroqEdit.Text := '';
-  GroqEdit.PasswordChar := #0;
-  Y := Y + 28;
+  // ── Página 2: Integraciones ──────────────────────────────────────────────────
+  IntegPage := CreateCustomPage(LLMPage.ID,
+    'Integraciones',
+    'Servicios opcionales que Nova puede usar para notificaciones y memoria.');
 
-  // OpenRouter
-  OpenRouterLabel := TLabel.Create(WizardForm);
-  OpenRouterLabel.Parent := APIKeyPage.Surface;
-  OpenRouterLabel.Caption := 'OpenRouter API Key  (gratis: openrouter.ai)';
-  OpenRouterLabel.Top := Y;
-  OpenRouterLabel.Left := 0;
-  OpenRouterLabel.AutoSize := True;
-  Y := Y + 18;
+  Y := 0;
 
-  OpenRouterEdit := TEdit.Create(WizardForm);
-  OpenRouterEdit.Parent := APIKeyPage.Surface;
-  OpenRouterEdit.Top := Y;
-  OpenRouterEdit.Left := 0;
-  OpenRouterEdit.Width := APIKeyPage.SurfaceWidth;
-  OpenRouterEdit.Text := '';
-  Y := Y + 28;
+  Note := TLabel.Create(WizardForm);
+  Note.Parent  := IntegPage.Surface;
+  Note.Caption := 'Todos opcionales — podés configurarlos después.';
+  Note.AutoSize := True;
+  Note.Top  := Y;
+  Note.Left := 0;
+  Note.Width := IntegPage.SurfaceWidth;
+  Y := Y + 26;
 
-  // Anthropic
-  AnthropicLabel := TLabel.Create(WizardForm);
-  AnthropicLabel.Parent := APIKeyPage.Surface;
-  AnthropicLabel.Caption := 'Anthropic API Key  (opcional, de pago)';
-  AnthropicLabel.Top := Y;
-  AnthropicLabel.Left := 0;
-  AnthropicLabel.AutoSize := True;
-  Y := Y + 18;
-
-  AnthropicEdit := TEdit.Create(WizardForm);
-  AnthropicEdit.Parent := APIKeyPage.Surface;
-  AnthropicEdit.Top := Y;
-  AnthropicEdit.Left := 0;
-  AnthropicEdit.Width := APIKeyPage.SurfaceWidth;
-  AnthropicEdit.Text := '';
+  AddField(IntegPage, 'Telegram Bot Token  (ej: 123456789:AAF...)',        TelegramTokenEdit, Y);
+  AddField(IntegPage, 'Telegram Chat ID',                                   TelegramChatEdit,  Y);
+  AddField(IntegPage, 'Obsidian API Key  (plugin Local REST API)',          ObsidianEdit,      Y);
+  AddField(IntegPage, 'GitHub Token  (ej: ghp_...)',                        GitHubEdit,        Y);
 end;
 
 // ── Escribir .env después de copiar los archivos ──────────────────────────────
 procedure WriteEnvFile;
 var
   EnvPath, Content: String;
-  GroqKey, OpenRouterKey, AnthropicKey: String;
 begin
   EnvPath := ExpandConstant('{app}\.env');
 
-  GroqKey       := Trim(GroqEdit.Text);
-  OpenRouterKey := Trim(OpenRouterEdit.Text);
-  AnthropicKey  := Trim(AnthropicEdit.Text);
-
-  // Valores vacíos dejan el campo en blanco (Nova usa Ollama local de fallback)
   Content :=
-    'GROQ_API_KEY='       + GroqKey       + #13#10 +
-    'OPENROUTER_API_KEY=' + OpenRouterKey + #13#10 +
-    'ANTHROPIC_API_KEY='  + AnthropicKey  + #13#10 +
-    'OLLAMA_BASE_URL=http://127.0.0.1:11434/v1' + #13#10 +
-    'ASSISTANT_NAME=Nova' + #13#10 +
-    'NOVA_VOICE=Reed'     + #13#10 +
-    'SESSION_BUDGET_USD=0.10' + #13#10;
+    'GROQ_API_KEY='         + Trim(GroqEdit.Text)          + #13#10 +
+    'OPENROUTER_API_KEY='   + Trim(OpenRouterEdit.Text)     + #13#10 +
+    'ANTHROPIC_API_KEY='    + Trim(AnthropicEdit.Text)      + #13#10 +
+    'CEREBRAS_API_KEY='     + Trim(CerebrasEdit.Text)       + #13#10 +
+    'MISTRAL_API_KEY='      + Trim(MistralEdit.Text)        + #13#10 +
+    'DEEPSEEK_API_KEY='     + Trim(DeepSeekEdit.Text)       + #13#10 +
+    'TELEGRAM_BOT_TOKEN='   + Trim(TelegramTokenEdit.Text)  + #13#10 +
+    'TELEGRAM_CHAT_ID='     + Trim(TelegramChatEdit.Text)   + #13#10 +
+    'OBSIDIAN_API_KEY='     + Trim(ObsidianEdit.Text)       + #13#10 +
+    'GITHUB_TOKEN='         + Trim(GitHubEdit.Text)         + #13#10 +
+    'OLLAMA_BASE_URL=http://127.0.0.1:11434/v1'             + #13#10 +
+    'ASSISTANT_NAME=Nova'                                   + #13#10 +
+    'NOVA_VOICE=Reed'                                       + #13#10 +
+    'SESSION_BUDGET_USD=0.10'                               + #13#10;
 
   SaveStringToFile(EnvPath, Content, False);
 end;

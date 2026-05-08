@@ -3737,6 +3737,59 @@ def skill_stats_modelos(_=None) -> str:
         return f"Error leyendo estadísticas: {e}"
 
 
+def skill_agregar_modelo(texto: str) -> str:
+    """Agrega un proveedor LLM custom al router dinámicamente."""
+    import re as _re
+
+    m = _re.search(
+        r"(?:nombre|proveedor|llm|modelo)?\s*"
+        r"([A-Za-z0-9_\-]{2,40})"
+        r".*?(?:url|base[_\s]?url|endpoint)\s*:?\s*(https?://\S+)"
+        r".*?(?:key|api[_\s]?key|token|api)\s*:?\s*([A-Za-z0-9_\-\.]{10,})"
+        r"(?:.*?(?:modelo|model)\s*:?\s*([A-Za-z0-9_\-\./:\+]{3,60}))?",
+        texto,
+        _re.IGNORECASE | _re.DOTALL,
+    )
+    if not m:
+        return (
+            "No pude extraer los datos. Usá el formato: "
+            "'agrega modelo NombreLLM url https://api.ejemplo.com/v1 key sk-xxx modelo gpt-4'"
+        )
+    name  = m.group(1).strip()
+    url   = m.group(2).strip().rstrip("/")
+    key   = m.group(3).strip()
+    model = (m.group(4) or "").strip() or "gpt-4o-mini"
+
+    try:
+        from nova.core.nova_router import NovaRouter
+        from nova.core import nova_router as _nr
+        if hasattr(_nr, "router") and isinstance(_nr.router, NovaRouter):
+            return _nr.router.add_custom_provider(name, url, key, model)
+        router = NovaRouter()
+        return router.add_custom_provider(name, url, key, model)
+    except Exception as e:
+        return f"Error al agregar proveedor: {e}"
+
+
+def skill_listar_modelos(texto: str = "") -> str:
+    """Lista los proveedores LLM activos y sus modelos."""
+    try:
+        from nova.core import nova_router as _nr
+        router = getattr(_nr, "router", None)
+        if router is None:
+            return "El router no está inicializado todavía, Señor."
+        lines = [f"Orden de proveedores: {', '.join(router.provider_order)}"]
+        if router._custom_clients:
+            lines.append("\nProveedores custom:")
+            for c in router._custom_clients:
+                lines.append(f"  {c['name']} — modelo: {c['model']} — url: {c['base_url']}")
+        else:
+            lines.append("Sin proveedores custom configurados.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"No pude listar los modelos: {e}"
+
+
 # ══════════════════════════════════════════════════════════════
 # 8. DISPATCHER — detección de intención
 # ══════════════════════════════════════════════════════════════
@@ -4228,6 +4281,13 @@ _INTENTS: list[tuple] = [
                                                                                skill_configurar_apikey, 0),
     (r"(?:configura[r]?|guarda[r]?|agrega[r]?|setea[r]?)\s+(?:la\s+)?(?:api|key|token)\s+(?:de\s+)?\w+",
                                                                                skill_configurar_apikey, 0),
+
+    # ── Modelos / proveedores LLM custom ─────────────────────────
+    (r"agrega(?:r)?\s+(?:modelo|proveedor|llm)",                               skill_agregar_modelo, 0),
+    (r"nuevo\s+(?:modelo|proveedor|llm)",                                       skill_agregar_modelo, 0),
+    (r"a[nñ]ade?\s+(?:modelo|proveedor|llm)",                                  skill_agregar_modelo, 0),
+    (r"(?:lista[r]?|ver|mostrar)\s+(?:modelos?|proveedores?)",                 skill_listar_modelos, 0),
+    (r"qu[eé]\s+modelos?\s+(?:hay|ten[eé]s|disponibles?)",                    skill_listar_modelos, 0),
 ]
 
 # Frases completas que indican búsqueda en tiempo real

@@ -341,37 +341,82 @@ def check_env_file() -> bool:
     print(f"\n{'─'*60}")
     print("  Nova — Configuración de API Keys")
     print("─"*60)
-    print("  Presioná ENTER para saltar cualquier key.")
-    print("  Podés agregarlas después diciendo:")
+    print("  Presioná Enter para saltar cualquier campo.")
+    print("  Podés agregarlos después diciendo:")
     print('    "nova, mi api de groq es gsk_xxxx"\n')
-
-    keys = [
-        ("GROQ_API_KEY",       "Groq        (gratis: console.groq.com)"),
-        ("OPENROUTER_API_KEY", "OpenRouter  (gratis: openrouter.ai)"),
-        ("ANTHROPIC_API_KEY",  "Anthropic   (opcional, de pago)"),
-    ]
 
     with open(env_path, "r", encoding="utf-8") as _f:
         content = _f.read()
 
-    any_saved = False
-    for env_key, label in keys:
-        try:
-            val = input(f"  {label}\n  {env_key} [Enter para saltar]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            val = ""
+    def _already_set(key: str) -> bool:
+        m = _re.search(rf"^{key}=(.+)$", content, _re.MULTILINE)
+        if not m:
+            return False
+        val = m.group(1).strip()
+        return bool(val) and "..." not in val and len(val) >= 16
+
+    def _ask_group(header: str, note: str, keys: list) -> bool:
+        if all(_already_set(k) for k, _ in keys):
+            return False
+        print(f"\n  ── {header} ──")
+        if note:
+            print(f"  {note}")
+        return True
+
+    def _save_key(env_key: str, val: str) -> bool:
+        nonlocal content
         if val and "..." not in val and len(val) >= 16:
-            content = _re.sub(
-                rf"^{env_key}=.*$", f"{env_key}={val}",
-                content, flags=_re.MULTILINE
-            )
-            if f"{env_key}=" not in content:
+            if _re.search(rf"^{env_key}=", content, _re.MULTILINE):
+                content = _re.sub(
+                    rf"^{env_key}=.*$", f"{env_key}={val}",
+                    content, flags=_re.MULTILINE
+                )
+            else:
                 content += f"\n{env_key}={val}\n"
             ok(f"{env_key} guardado")
-            any_saved = True
-        else:
-            info(f"{env_key} omitido — configurable luego desde Nova")
+            return True
+        info(f"{env_key} omitido — configurable luego desde Nova")
+        return False
+
+    any_saved = False
+
+    llm_keys = [
+        ("GROQ_API_KEY",       "Groq        (gratis: console.groq.com)"),
+        ("OPENROUTER_API_KEY", "OpenRouter  (gratis: openrouter.ai)"),
+        ("ANTHROPIC_API_KEY",  "Anthropic   (opcional, de pago)"),
+        ("CEREBRAS_API_KEY",   "Cerebras    (gratis: inference.cerebras.ai)"),
+        ("MISTRAL_API_KEY",    "Mistral     (free tier: console.mistral.ai)"),
+        ("DEEPSEEK_API_KEY",   "DeepSeek    (barato: platform.deepseek.com)"),
+    ]
+    if _ask_group("LLM Providers", "Al menos uno recomendado. Groq y Cerebras son gratis.", llm_keys):
+        for env_key, label in llm_keys:
+            if _already_set(env_key):
+                continue
+            try:
+                val = input(f"  {label}\n  {env_key} [Enter para saltar]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                val = ""
+            if _save_key(env_key, val):
+                any_saved = True
+
+    integration_keys = [
+        ("TELEGRAM_BOT_TOKEN", "Telegram Bot Token"),
+        ("TELEGRAM_CHAT_ID",   "Telegram Chat ID"),
+        ("OBSIDIAN_API_KEY",   "Obsidian API Key (plugin Local REST API)"),
+        ("GITHUB_TOKEN",       "GitHub Token     (ghp_...)"),
+    ]
+    if _ask_group("Integraciones", "Todos opcionales — podés configurarlos después.", integration_keys):
+        for env_key, label in integration_keys:
+            if _already_set(env_key):
+                continue
+            try:
+                val = input(f"  {label}\n  {env_key} [Enter para saltar]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                val = ""
+            if _save_key(env_key, val):
+                any_saved = True
 
     with open(env_path, "w", encoding="utf-8") as _f:
         _f.write(content)
