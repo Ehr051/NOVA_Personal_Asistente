@@ -161,8 +161,26 @@ def check_system_deps() -> None:
 def create_desktop_launcher() -> None:
     """Crea un acceso directo / lanzador en el escritorio según el OS."""
     base = os.path.dirname(os.path.abspath(__file__))
-    desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-    if not os.path.isdir(desktop):
+
+    # Detectar escritorio en inglés y español (Windows puede ser "Escritorio")
+    home = os.path.expanduser("~")
+    desktop = None
+    for candidate in ["Desktop", "Escritorio", "Bureau", "Schreibtisch"]:
+        p = os.path.join(home, candidate)
+        if os.path.isdir(p):
+            desktop = p
+            break
+    # Fallback: pedir ruta via WinAPI si estamos en Windows
+    if desktop is None and PLATFORM == "windows":
+        try:
+            import ctypes
+            buf = ctypes.create_unicode_buffer(260)
+            ctypes.windll.shell32.SHGetFolderPathW(0, 0, 0, 0, buf)
+            desktop = buf.value  # CSIDL_DESKTOP
+        except Exception:
+            pass
+    if desktop is None or not os.path.isdir(desktop):
+        warn("No se encontró el escritorio — saltando creación de lanzador")
         return
 
     if PLATFORM == "macos":
@@ -453,19 +471,20 @@ def install_all() -> None:
 
     # ── Resumen final ───────────────────────────────────────────────────────
     print(f"\n{'─'*55}")
-    print(f"{BOLD}Nova listo para usar.{RESET}")
+    print(f"{BOLD}{GREEN}✓ Nova instalado correctamente.{RESET}")
     print()
-    print("Siguientes pasos:")
     if PLATFORM == "macos":
-        print("  1. Editá .env y configurá tus API keys")
-        print("  2. chmod +x launch_nova.sh")
-        print("  3. ./launch_nova.sh   (o hacer doble clic en el lanzador de Nova en el escritorio)")
+        print(f"  Hacé doble clic en {BOLD}Nova{RESET} en el Escritorio para iniciar.")
+        print(f"  O desde terminal:  {CYAN}./launch_nova.sh{RESET}")
     elif PLATFORM == "windows":
-        print("  1. Editá .env y configurá tus API keys")
-        print("  2. python main.py      (o hacer doble clic en el lanzador de Nova en el escritorio)")
+        print(f"  Hacé doble clic en {BOLD}Nova{RESET} en el Escritorio para iniciar.")
+        print(f"  O desde terminal:  {CYAN}python main.py{RESET}")
     else:
-        print("  1. Editá .env y configurá tus API keys")
-        print("  2. python main.py      (o hacer doble clic en el lanzador de Nova en el escritorio)")
+        print(f"  Hacé doble clic en {BOLD}Nova{RESET} en el Escritorio para iniciar.")
+        print(f"  O desde terminal:  {CYAN}python main.py{RESET}")
+    print()
+    if PLATFORM == "windows":
+        input("  Presioná Enter para cerrar el instalador...")
     print()
 
 
