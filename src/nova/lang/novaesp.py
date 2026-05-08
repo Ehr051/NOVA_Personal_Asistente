@@ -816,39 +816,57 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
     # Calibrar contra el ruido ambiente ANTES de empezar
     _calibrate_recognizer(recognizer, mic)
 
+    # ── Intentar conectar al daemon (evita conflicto Qdrant) ────────────────
+    _daemon_client = None
     try:
-        router = NovaRouter()
-    except EnvironmentError as e:
-        print(f"\n[ERROR] {e}\n")
-        stop_event.set()
-        return
+        from nova.core.nova_client import NovaDaemonClient
+        _c = NovaDaemonClient(auto_start=False)
+        if _c.ping():
+            _daemon_client = _c
+            print("  [Daemon] Conectado al proceso central (puerto "
+                  f"{os.getenv('NOVA_DAEMON_PORT','7899')})")
+        else:
+            print("  [Daemon] No detectado — usando router local")
+    except Exception as _de:
+        log.debug("[Daemon] No disponible: %s", _de)
 
-    # Inyectar Router y Callback de notificaciones en las skills
+    # ── Inicializar router y memoria SOLO si no hay daemon ──────────────────
+    router = None
+    if _daemon_client is None:
+        try:
+            router = NovaRouter()
+        except EnvironmentError as e:
+            print(f"\n[ERROR] {e}\n")
+            stop_event.set()
+            return
+
+    # Inyectar Router en skills (None es aceptado — skills usan su propio router interno)
     skills.set_router(router)
     # notify_callback es SOLO para notificaciones de tareas en background (timers, agentes async).
-    # NO registrar speak() aquí — el loop principal ya llama speak(skill_resp) después de dispatch().
-    # Registrar speak() aquí causaba doble audio: notify + main loop.
     def _bg_notify(text: str) -> None:
-        """Habla solo si viene de una tarea de fondo (no del dispatch principal)."""
         print(f"  [BG NOTIFY] {text}")
         speak(text, hud)
     skills.set_notify_callback(_bg_notify)
 
-    # ── Cargar contexto del Gran Cerebro al sistema ───────────────────────────
-    try:
-        vault_ctx = nova_memory.load_vault_context()
-    except AttributeError:
-        vault_ctx = ""
-    if vault_ctx:
-        router.system_prompt = router.system_prompt + (
-            "\n\n[CONTEXTO DEL GRAN CEREBRO — actualizado al arrancar]\n"
-            + vault_ctx
-        )
-        print(f"  [Cerebro] Contexto cargado ({len(vault_ctx)} chars)")
-    else:
-        print("  [Cerebro] Vault no disponible o vacío — continuando sin contexto.")
+    # ── Cargar contexto del Gran Cerebro ────────────────────────────────────
+    vault_ctx = ""
+    if router is not None:
+        try:
+            vault_ctx = nova_memory.load_vault_context()
+        except AttributeError:
+            pass
+        if vault_ctx:
+            router.system_prompt = router.system_prompt + (
+                "\n\n[CONTEXTO DEL GRAN CEREBRO — actualizado al arrancar]\n"
+                + vault_ctx
+            )
+            print(f"  [Cerebro] Contexto cargado ({len(vault_ctx)} chars)")
+        else:
+            print("  [Cerebro] Vault no disponible o vacío — continuando sin contexto.")
 
-    history: list[dict] = nova_memory.get_recent_turns(MAX_HISTORY * 2)
+    history: list[dict] = (
+        [] if _daemon_client else nova_memory.get_recent_turns(MAX_HISTORY * 2)
+    )
     last_activation_ts = 0.0
     dictation_mode = False
     is_muted = False
