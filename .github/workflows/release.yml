@@ -1,4 +1,4 @@
-name: Release
+name: Release Notes
 
 on:
   push:
@@ -8,149 +8,17 @@ on:
 permissions:
   contents: write
 
+# Este workflow solo actualiza el body del release con el changelog.
+# Los binarios (Nova-Setup.exe, Nova-Windows.zip, etc.) los genera build.yml.
+
 jobs:
-  # ─── Build Windows ────────────────────────────────────────────────────────────
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Instalar dependencias
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt --ignore-requires-python
-          pip install pywin32 pyautogui pillow
-
-      - name: Build con PyInstaller
-        shell: pwsh
-        run: |
-          pyinstaller nova.spec --noconfirm
-
-      - name: Crear Nova-Windows.zip (portable)
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/Nova -DestinationPath Nova-Windows.zip
-
-      - name: Crear Nova-Setup.exe (instalador standalone)
-        shell: pwsh
-        run: |
-          pyinstaller main.py `
-            --onefile `
-            --name Nova-Setup `
-            --icon assets/nova.ico `
-            --add-data "src/nova;nova" `
-            --add-data "assets;assets" `
-            --add-data ".env.example;." `
-            --hidden-import nova.cli.repl `
-            --hidden-import nova.core.nova_router `
-            --hidden-import nova.tools.nova_skills `
-            --hidden-import nova.lang.novaesp `
-            --hidden-import speech_recognition `
-            --hidden-import edge_tts `
-            --hidden-import groq `
-            --hidden-import openai `
-            --hidden-import dotenv `
-            --noconfirm
-
-      - name: Upload artifacts Windows
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-builds
-          path: |
-            Nova-Windows.zip
-            dist/Nova-Setup.exe
-
-  # ─── Build macOS ──────────────────────────────────────────────────────────────
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Instalar dependencias sistema
-        run: |
-          brew install portaudio 2>/dev/null || true
-
-      - name: Instalar dependencias Python
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt --ignore-requires-python
-          pip install pyautogui pillow
-
-      - name: Build con PyInstaller
-        run: |
-          pyinstaller nova.spec --noconfirm
-
-      - name: Crear Nova-macOS.zip
-        run: |
-          cd dist
-          zip -r ../Nova-macOS.zip Nova.app
-
-      - name: Upload artifact macOS
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-build
-          path: Nova-macOS.zip
-
-  # ─── Build Linux ──────────────────────────────────────────────────────────────
-  build-linux:
+  update-release-notes:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Instalar dependencias sistema
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y portaudio19-dev python3-dev
-
-      - name: Instalar dependencias Python
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -r requirements.txt --ignore-requires-python
-          pip install pillow
-
-      - name: Build con PyInstaller
-        run: |
-          pyinstaller nova.spec --noconfirm
-
-      - name: Crear Nova-Linux.tar.gz
-        run: |
-          tar -czf Nova-Linux.tar.gz -C dist Nova
-
-      - name: Upload artifact Linux
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-build
-          path: Nova-Linux.tar.gz
-
-  # ─── Crear Release con todos los artefactos ───────────────────────────────────
-  release:
-    needs: [build-windows, build-macos, build-linux]
-    runs-on: ubuntu-latest
+    # Esperar a que build.yml termine de crear el release
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Descargar artefactos
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
 
       - name: Build changelog
         id: changelog
@@ -165,7 +33,7 @@ jobs:
           echo "$COMMITS" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Crear Release
+      - name: Actualizar notas del release
         uses: softprops/action-gh-release@v2
         with:
           name: "Nova ${{ github.ref_name }}"
@@ -175,12 +43,12 @@ jobs:
             ### Descarga según tu sistema operativo:
             | Sistema | Archivo | Descripción |
             |---------|---------|-------------|
-            | Windows | `Nova-Setup.exe` | Ejecutable standalone (recomendado) |
-            | Windows | `Nova-Windows.zip` | Versión portable |
-            | macOS   | `Nova-macOS.zip`   | Aplicación .app |
-            | Linux   | `Nova-Linux.tar.gz` | Binario compilado |
+            | Windows | `Nova-Setup.exe` | **Instalador** — crea acceso directo y comando `nova` |
+            | Windows (portable) | `Nova-Windows.zip` | Sin instalación, descomprimí y ejecutá |
+            | macOS   | `Nova-macOS.zip`   | Descomprimí y ejecutá |
+            | Linux   | `Nova-Linux.tar.gz` | Descomprimí y ejecutá |
 
-            ### Primera vez (alternativa — instalador Python):
+            ### Instalación desde código fuente:
             ```bash
             git clone https://github.com/${{ github.repository }}.git
             cd NOVA_Personal_Asistente
@@ -191,10 +59,5 @@ jobs:
             ---
             ### Cambios en ${{ github.ref_name }}
             ${{ steps.changelog.outputs.CHANGELOG }}
-          files: |
-            artifacts/windows-builds/Nova-Windows.zip
-            artifacts/windows-builds/Nova-Setup.exe
-            artifacts/macos-build/Nova-macOS.zip
-            artifacts/linux-build/Nova-Linux.tar.gz
           draft: false
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
