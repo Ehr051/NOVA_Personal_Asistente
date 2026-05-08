@@ -259,7 +259,11 @@ def open_app(app_name: str) -> str:
         result = f"Abriendo {matches[0]}, Señor."
         if _pending_action:
             import time as _t; _t.sleep(1.5)
-            action_result = dispatch(_pending_action)
+            if re.search(r"nuevo\s*(?:archivo|documento|doc)|archivo\s*nuevo|documento\s*nuevo"
+                         r"|crea[r]?\s+(?:un\s+)?(?:archivo|documento|doc)", _pending_action, re.I):
+                action_result = new_document_in_app(matches[0])
+            else:
+                action_result = dispatch(_pending_action)
             result += f" {action_result}" if action_result else ""
         return result
     return (
