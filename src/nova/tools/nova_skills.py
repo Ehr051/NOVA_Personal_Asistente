@@ -218,12 +218,16 @@ def open_app(app_name: str) -> str:
 
     # Separar comandos compuestos: "Chrome y busca YouTube" → abrir Chrome + acción
     _compound = re.search(
-        r'\s+y\s+(busca[r]?|navega[r]?|ve\s+a|entr[aá]\s+a|abr[ií]\s+|ir\s+a)\s+(.+)$',
+        r'\s+y\s+(busca[r]?|navega[r]?|ve\s+a|entr[aá]\s+a|abr[ií]\s+|ir\s+a'
+        r'|nuevo\s+(?:archivo|documento|doc)|archivo\s+nuevo|documento\s+nuevo'
+        r'|crea[r]?\s+(?:un\s+)?(?:archivo|documento|doc)(?:\s+nuevo)?)\s*(.*)$',
         app_name, re.IGNORECASE
     )
     _pending_action: str | None = None
     if _compound:
-        _pending_action = app_name[_compound.start():].strip()
+        # Extraer solo la acción (sin el " y " inicial): "y navega a X" → "navega a X"
+        raw_pending = app_name[_compound.start():].strip()
+        _pending_action = re.sub(r"^\s*y\s+", "", raw_pending, flags=re.IGNORECASE).strip()
         app_name = app_name[:_compound.start()].strip()
     # Alias en español
     alias = _OPEN_APP_ALIASES.get(app_name.lower())
@@ -234,7 +238,8 @@ def open_app(app_name: str) -> str:
         result = f"Abriendo {app_name}, Señor."
         if _pending_action:
             import time as _t; _t.sleep(1.5)
-            result += f" {dispatch(_pending_action) or ''}"
+            action_result = dispatch(_pending_action)
+            result += f" {action_result}" if action_result else ""
         return result.strip()
     # Fuzzy match (case-insensitive, sin acentos)
     apps = get_installed_apps()
@@ -248,7 +253,9 @@ def open_app(app_name: str) -> str:
         open_application(matches[0])
         result = f"Abriendo {matches[0]}, Señor."
         if _pending_action:
-            result += f" Luego: {dispatch(_pending_action) or _pending_action}"
+            import time as _t; _t.sleep(1.5)
+            action_result = dispatch(_pending_action)
+            result += f" {action_result}" if action_result else ""
         return result
     return (
         f"No encontré ninguna aplicación con el nombre '{app_name}', Señor. "
@@ -1577,8 +1584,6 @@ def computer_pilot_mode(goal: str) -> str:
         return "El módulo de router no está inicializado."
     
     import time
-    if _notify_cb:
-        _notify_cb(f"Empezando piloto automático para: {goal}")
     log.info("[AUTOPILOTO] Misión: %s", goal)
     
     sys_override = (

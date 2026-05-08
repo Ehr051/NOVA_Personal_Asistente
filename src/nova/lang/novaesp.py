@@ -412,9 +412,9 @@ def speak(text: str, hud: NovaHUD, lang: str = "es") -> None:
             pass
         _tmp_audio = None
 
-    # Cooldown: no escuchar hasta que el eco acústico de la habitación se disipe
+    # Cooldown proporcional a la longitud del texto: ~55ms/char, mínimo TTS_COOLDOWN
     _nova_speaking = False
-    _tts_until = time.time() + TTS_COOLDOWN
+    _tts_until = time.time() + max(TTS_COOLDOWN, len(text) * 0.055)
     hud.put_state(status="IDLE")
 
 
@@ -732,11 +732,8 @@ def _build_messages(history: list[dict], base_system: str, extra_context: str = 
     """
     facts = nova_memory.get_all_facts()
     system = base_system
-    system += (
-        "\n\n[Skills locales disponibles]\n"
-        + skills.capabilities_summary()
-        + "\nSi una orden no está clara, haz una sola pregunta de aclaración concreta."
-    )
+    # NO inyectar lista de skills al LLM — las skills se ejecutan ANTES que el LLM,
+    # inyectar el catálogo hace que el LLM fabrique ejecuciones que no ocurrieron.
     if facts:
         system += f"\n\n{facts}"
 
@@ -828,7 +825,14 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
 
     # Inyectar Router y Callback de notificaciones en las skills
     skills.set_router(router)
-    skills.set_notify_callback(lambda text: speak(text, hud))
+    # notify_callback es SOLO para notificaciones de tareas en background (timers, agentes async).
+    # NO registrar speak() aquí — el loop principal ya llama speak(skill_resp) después de dispatch().
+    # Registrar speak() aquí causaba doble audio: notify + main loop.
+    def _bg_notify(text: str) -> None:
+        """Habla solo si viene de una tarea de fondo (no del dispatch principal)."""
+        print(f"  [BG NOTIFY] {text}")
+        speak(text, hud)
+    skills.set_notify_callback(_bg_notify)
 
     # ── Cargar contexto del Gran Cerebro al sistema ───────────────────────────
     try:
