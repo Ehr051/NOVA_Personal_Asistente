@@ -1,4 +1,5 @@
 .env
+launch_nova.bat
 __pycache__/
 *.pyc
 *.pyo

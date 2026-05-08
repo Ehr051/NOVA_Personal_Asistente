@@ -31,51 +31,6 @@ sys.path.insert(0, os.path.join(_BASE_DIR, "src"))
 _ENV_PATH = os.path.join(_BASE_DIR, ".env")
 
 
-def _first_run_setup() -> None:
-    """Si no hay .env, crea uno desde .env.example y pide las keys opcionales."""
-    example = os.path.join(_BASE_DIR, ".env.example")
-    if os.path.exists(example):
-        import shutil
-        shutil.copy(example, _ENV_PATH)
-
-    print("\n" + "─" * 60)
-    print("  Nova — Primera configuración")
-    print("─" * 60)
-    print("  No se encontró .env. Ingresá tus API keys o presioná")
-    print("  ENTER para saltar — podés configurarlas más tarde.\n")
-
-    keys = {
-        "GROQ_API_KEY":       "Groq  (gratis: console.groq.com)",
-        "OPENROUTER_API_KEY": "OpenRouter (gratis: openrouter.ai)",
-        "ANTHROPIC_API_KEY":  "Anthropic/Claude (opcional)",
-    }
-
-    values: dict[str, str] = {}
-    for env_key, label in keys.items():
-        try:
-            val = input(f"  {label}\n  {env_key} [Enter para saltar]: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            val = ""
-        if val and "..." not in val and len(val) >= 20:
-            values[env_key] = val
-
-    if not values:
-        print("\n  Sin keys — Nova arrancará con Ollama local si está disponible.")
-        print("  Para agregar keys después, escribí en Nova:")
-        print('    "nova, mi api de groq es gsk_xxxx"')
-    else:
-        import re
-        with open(_ENV_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
-        for env_key, val in values.items():
-            content = re.sub(rf"^{env_key}=.*$", f"{env_key}={val}", content, flags=re.MULTILINE)
-        with open(_ENV_PATH, "w", encoding="utf-8") as f:
-            f.write(content)
-
-    print(f"\n  .env en: {_ENV_PATH}")
-    print("─" * 60 + "\n")
-
-
 if __name__ == "__main__":
     # Cargar .env desde la ubicación correcta (junto al ejecutable)
     try:
@@ -83,10 +38,19 @@ if __name__ == "__main__":
         if os.path.exists(_ENV_PATH):
             load_dotenv(_ENV_PATH)
         else:
-            _first_run_setup()
-            load_dotenv(_ENV_PATH)
+            print("\n" + "─" * 60)
+            print("  Nova — Falta configuración")
+            print("─" * 60)
+            print("  No se encontró .env.")
+            print("  Ejecutá el instalador primero:\n")
+            print("    python install.py\n")
+            print("  Luego volvé a abrir Nova.")
+            print("─" * 60)
+            if sys.platform == "win32":
+                input("\n  Presioná Enter para cerrar...")
+            sys.exit(1)
     except ImportError:
-        pass
+        pass  # python-dotenv no instalado — continuar igual
 
     from nova.lang.novaesp import main as esp_main
     esp_main()

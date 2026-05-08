@@ -225,22 +225,39 @@ def create_desktop_launcher() -> None:
             warn(f"No se pudo crear Nova.app en escritorio: {e}")
 
     elif PLATFORM == "windows":
-        # Crear acceso directo .lnk con ícono via PowerShell
+        # Siempre crear launch_nova.bat en el directorio del proyecto.
+        # El .bat mantiene la ventana abierta si hay error (pause al final).
         ico  = os.path.join(base, "assets", "nova.ico")
+        bat  = os.path.join(base, "launch_nova.bat")
         lnk  = os.path.join(desktop, "Nova.lnk")
-        main = os.path.join(base, "main.py")
-        python_exe = sys.executable.replace("\\", "\\\\")
-        ico_path   = ico.replace("\\", "\\\\")
-        lnk_path   = lnk.replace("\\", "\\\\")
-        main_path  = main.replace("\\", "\\\\")
-        base_path  = base.replace("\\", "\\\\")
+        python_exe = sys.executable
+
+        with open(bat, "w", encoding="utf-8") as f:
+            f.write(
+                f'@echo off\n'
+                f'cd /d "{base}"\n'
+                f'"{python_exe}" main.py\n'
+                f'if errorlevel 1 (\n'
+                f'    echo.\n'
+                f'    echo  Nova cerro con error. Revisa el mensaje de arriba.\n'
+                f'    pause\n'
+                f')\n'
+            )
+        ok(f"Wrapper creado: {bat}")
+
+        # Crear .lnk que apunta al .bat (ventana no desaparece en error)
+        bat_path  = bat.replace("\\", "\\\\")
+        lnk_path  = lnk.replace("\\", "\\\\")
+        base_path = base.replace("\\", "\\\\")
+        ico_path  = ico.replace("\\", "\\\\")
         ps_script = (
             f'$ws = New-Object -ComObject WScript.Shell; '
             f'$sc = $ws.CreateShortcut("{lnk_path}"); '
-            f'$sc.TargetPath = "{python_exe}"; '
-            f'$sc.Arguments = \'"{main_path}"\'; '
+            f'$sc.TargetPath = "cmd.exe"; '
+            f'$sc.Arguments = \'/c ""{bat_path}""\'; '
             f'$sc.WorkingDirectory = "{base_path}"; '
             f'$sc.Description = "Nova Personal Assistant"; '
+            f'$sc.WindowStyle = 1; '
             + (f'$sc.IconLocation = "{ico_path},0"; ' if os.path.exists(ico) else '') +
             f'$sc.Save()'
         )
@@ -252,11 +269,7 @@ def create_desktop_launcher() -> None:
             if result.returncode == 0 and os.path.exists(lnk):
                 ok(f"Lanzador creado: {lnk}")
             else:
-                # Fallback: .bat sin ícono
-                bat = os.path.join(desktop, "Nova.bat")
-                with open(bat, "w") as f:
-                    f.write(f'@echo off\ncd /d "{base}"\npython main.py\npause\n')
-                warn(f"Shortcut no disponible — creado {bat} (sin ícono)")
+                warn(f"Shortcut no disponible — usá {bat} directamente")
         except Exception as e:
             warn(f"No se pudo crear lanzador en escritorio: {e}")
 
@@ -285,19 +298,71 @@ def create_desktop_launcher() -> None:
 
 
 def check_env_file() -> bool:
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
-    example_path = os.path.join(os.path.dirname(__file__), ".env.example")
+    """Crea .env desde .env.example y pide las API keys interactivamente."""
+    import re as _re
+    base = os.path.dirname(os.path.abspath(__file__))
+    env_path     = os.path.join(base, ".env")
+    example_path = os.path.join(base, ".env.example")
+
     if os.path.exists(env_path):
         ok(".env encontrado")
         return True
+
     if os.path.exists(example_path):
-        warn(".env no encontrado — copiando .env.example")
         import shutil as _sh
         _sh.copy(example_path, env_path)
-        warn("Editá .env y agrega tus API keys (GROQ_API_KEY, OPENROUTER_API_KEY)")
-        return True
-    warn(".env no encontrado y no hay .env.example — creá uno manualmente")
-    return False
+    else:
+        warn(".env.example no encontrado — creando .env mínimo")
+        with open(env_path, "w", encoding="utf-8") as _f:
+            _f.write(
+                "GROQ_API_KEY=\nOPENROUTER_API_KEY=\nANTHROPIC_API_KEY=\n"
+                "OLLAMA_BASE_URL=http://127.0.0.1:11434/v1\n"
+                "ASSISTANT_NAME=Nova\nNOVA_VOICE=Reed\n"
+            )
+
+    print(f"\n{'─'*60}")
+    print("  Nova — Configuración de API Keys")
+    print("─"*60)
+    print("  Presioná ENTER para saltar cualquier key.")
+    print("  Podés agregarlas después diciendo:")
+    print('    "nova, mi api de groq es gsk_xxxx"\n')
+
+    keys = [
+        ("GROQ_API_KEY",       "Groq        (gratis: console.groq.com)"),
+        ("OPENROUTER_API_KEY", "OpenRouter  (gratis: openrouter.ai)"),
+        ("ANTHROPIC_API_KEY",  "Anthropic   (opcional, de pago)"),
+    ]
+
+    with open(env_path, "r", encoding="utf-8") as _f:
+        content = _f.read()
+
+    any_saved = False
+    for env_key, label in keys:
+        try:
+            val = input(f"  {label}\n  {env_key} [Enter para saltar]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            val = ""
+        if val and "..." not in val and len(val) >= 16:
+            content = _re.sub(
+                rf"^{env_key}=.*$", f"{env_key}={val}",
+                content, flags=_re.MULTILINE
+            )
+            if f"{env_key}=" not in content:
+                content += f"\n{env_key}={val}\n"
+            ok(f"{env_key} guardado")
+            any_saved = True
+        else:
+            info(f"{env_key} omitido — configurable luego desde Nova")
+
+    with open(env_path, "w", encoding="utf-8") as _f:
+        _f.write(content)
+
+    print(f"\n  .env en: {env_path}")
+    print("─"*60)
+    if not any_saved:
+        warn("Sin keys — Nova usará Ollama local si está disponible.")
+    return True
 
 # ─── Instalación ─────────────────────────────────────────────────────────────
 
