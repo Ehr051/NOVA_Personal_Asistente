@@ -241,7 +241,7 @@ def create_desktop_launcher() -> None:
             f'$sc.Arguments = \'"{main_path}"\'; '
             f'$sc.WorkingDirectory = "{base_path}"; '
             f'$sc.Description = "Nova Personal Assistant"; '
-            + (f'$sc.IconLocation = "{ico_path}"; ' if os.path.exists(ico) else '') +
+            + (f'$sc.IconLocation = "{ico_path},0"; ' if os.path.exists(ico) else '') +
             f'$sc.Save()'
         )
         try:
