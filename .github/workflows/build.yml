@@ -89,9 +89,10 @@ jobs:
           }
           Write-Host "Usando ISCC: $iscc"
           New-Item -ItemType Directory -Force -Path installer\installer_output
-          & $iscc installer\nova_setup.iss
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          & $iscc installer\nova_setup.iss /DAppVersion=$version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item installer\installer_output\*.exe Nova-Setup.exe
+          Copy-Item installer\installer_output\Nova-Setup.exe Nova-Setup.exe
 
       # ── Empaquetar ────────────────────────────────────────────────────────
       - name: Package (Windows)
