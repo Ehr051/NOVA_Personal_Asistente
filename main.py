@@ -32,7 +32,7 @@ _ENV_PATH = os.path.join(_BASE_DIR, ".env")
 
 
 def _first_run_setup() -> None:
-    """Si no hay .env, guía al usuario para crear uno con sus API keys."""
+    """Si no hay .env, crea uno desde .env.example y pide las keys opcionales."""
     example = os.path.join(_BASE_DIR, ".env.example")
     if os.path.exists(example):
         import shutil
@@ -41,37 +41,38 @@ def _first_run_setup() -> None:
     print("\n" + "─" * 60)
     print("  Nova — Primera configuración")
     print("─" * 60)
-    print("  No se encontró .env con tus API keys.")
-    print("  Completá al menos una para poder usar Nova.\n")
+    print("  No se encontró .env. Ingresá tus API keys o presioná")
+    print("  ENTER para saltar — podés configurarlas más tarde.\n")
 
     keys = {
-        "GROQ_API_KEY":       ("Groq (gratis en console.groq.com)", "gsk_"),
-        "OPENROUTER_API_KEY": ("OpenRouter (gratis en openrouter.ai)", "sk-or-"),
-        "ANTHROPIC_API_KEY":  ("Anthropic / Claude (opcional)", "sk-ant-"),
+        "GROQ_API_KEY":       "Groq  (gratis: console.groq.com)",
+        "OPENROUTER_API_KEY": "OpenRouter (gratis: openrouter.ai)",
+        "ANTHROPIC_API_KEY":  "Anthropic/Claude (opcional)",
     }
 
     values: dict[str, str] = {}
-    for env_key, (label, prefix) in keys.items():
-        val = input(f"  {label}\n  {env_key}: ").strip()
-        if val:
+    for env_key, label in keys.items():
+        try:
+            val = input(f"  {label}\n  {env_key} [Enter para saltar]: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            val = ""
+        if val and "..." not in val and len(val) >= 20:
             values[env_key] = val
 
     if not values:
-        print("\n  [!] No ingresaste ninguna key — Nova usará Ollama local si está disponible.")
-        print("      Editá .env para agregar keys más tarde.\n")
-
-    # Leer el .env base y reemplazar placeholders
-    with open(_ENV_PATH, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    for env_key, val in values.items():
+        print("\n  Sin keys — Nova arrancará con Ollama local si está disponible.")
+        print("  Para agregar keys después, escribí en Nova:")
+        print('    "nova, mi api de groq es gsk_xxxx"')
+    else:
         import re
-        content = re.sub(rf"^{env_key}=.*$", f"{env_key}={val}", content, flags=re.MULTILINE)
+        with open(_ENV_PATH, "r", encoding="utf-8") as f:
+            content = f.read()
+        for env_key, val in values.items():
+            content = re.sub(rf"^{env_key}=.*$", f"{env_key}={val}", content, flags=re.MULTILINE)
+        with open(_ENV_PATH, "w", encoding="utf-8") as f:
+            f.write(content)
 
-    with open(_ENV_PATH, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    print(f"\n  .env guardado en: {_ENV_PATH}")
+    print(f"\n  .env en: {_ENV_PATH}")
     print("─" * 60 + "\n")
 
 

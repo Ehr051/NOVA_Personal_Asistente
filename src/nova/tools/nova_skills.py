@@ -2332,6 +2332,77 @@ def skill_leer_archivo(args: str) -> str:
 
 
 
+def skill_configurar_apikey(texto: str) -> str:
+    """Guarda una API key en el .env desde el chat. Recarga el router inmediatamente."""
+    import re, os
+    from pathlib import Path
+
+    _KEY_MAP = {
+        "groq":        "GROQ_API_KEY",
+        "openrouter":  "OPENROUTER_API_KEY",
+        "anthropic":   "ANTHROPIC_API_KEY",
+        "claude":      "ANTHROPIC_API_KEY",
+        "openai":      "OPENAI_API_KEY",
+        "deepseek":    "DEEPSEEK_API_KEY",
+        "mistral":     "MISTRAL_API_KEY",
+        "cerebras":    "CEREBRAS_API_KEY",
+        "github":      "GITHUB_TOKEN",
+        "telegram":    "TELEGRAM_BOT_TOKEN",
+    }
+
+    texto_lower = texto.lower()
+    env_key = None
+    for kw, ek in _KEY_MAP.items():
+        if kw in texto_lower:
+            env_key = ek
+            break
+
+    if not env_key:
+        providers = ", ".join(_KEY_MAP.keys())
+        return f"No reconocí el proveedor. Podés decir: 'mi api de groq es gsk_xxx', 'mi api de openrouter es sk-or-xxx'. Proveedores: {providers}."
+
+    # Extraer el valor de la key del texto
+    # Patrones: "es gsk_xxx", "key: gsk_xxx", ": gsk_xxx", "= gsk_xxx"
+    m = re.search(r"(?:es|key|token|:|\s|=)\s*([A-Za-z0-9_\-]{15,})", texto)
+    if not m:
+        return f"No pude extraer el valor. Decí por ejemplo: 'mi api de groq es gsk_xxxxx'"
+
+    value = m.group(1).strip()
+    if len(value) < 15 or "..." in value:
+        return f"La key parece inválida: '{value}'. Asegurate de pegar el valor completo."
+
+    # Escribir en .env
+    env_path = Path(__file__).parents[3] / ".env"
+    if not env_path.exists():
+        # crear .env mínimo si no existe
+        env_path.write_text(f"{env_key}={value}\n", encoding="utf-8")
+    else:
+        content = env_path.read_text(encoding="utf-8")
+        pattern = rf"^{re.escape(env_key)}=.*$"
+        if re.search(pattern, content, re.MULTILINE):
+            content = re.sub(pattern, f"{env_key}={value}", content, flags=re.MULTILINE)
+        else:
+            content += f"\n{env_key}={value}\n"
+        env_path.write_text(content, encoding="utf-8")
+
+    # Recargar en os.environ y reinicializar router
+    os.environ[env_key] = value
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(env_path, override=True)
+    except Exception:
+        pass
+
+    # Reinicializar el router con las nuevas keys
+    try:
+        from nova.core import nova_router as _nr
+        _nr.router.__init__()
+        providers_active = _nr.router._active_provider
+        return f"Key de {env_key} guardada y router recargado. Proveedores activos: {providers_active}"
+    except Exception as e:
+        return f"Key guardada en .env. Reiniciá Nova para activarla. ({e})"
+
+
 def skill_cambiar_idioma(texto: str) -> str:
     """Cambia el idioma de la sesión. El usuario lo activa explícitamente."""
     try:
@@ -4138,6 +4209,11 @@ _INTENTS: list[tuple] = [
                                                                                skill_cambiar_idioma, 0),
     (r"(?:vuelve|regresa?|cambia?)\s+(?:al?\s+)?español",                     skill_cambiar_idioma, 0),
     (r"(?:let'?s\s+)?(?:speak|talk)\s+in\s+\w+",                             skill_cambiar_idioma, 0),
+    # ── Configurar API key desde chat ────────────────────────────
+    (r"(?:mi\s+)?(?:api|key|token)\s+(?:de\s+|del?\s+)?\w+\s+(?:es|:)\s+\S{15,}",
+                                                                               skill_configurar_apikey, 0),
+    (r"(?:configura[r]?|guarda[r]?|agrega[r]?|setea[r]?)\s+(?:la\s+)?(?:api|key|token)\s+(?:de\s+)?\w+",
+                                                                               skill_configurar_apikey, 0),
 ]
 
 # Frases completas que indican búsqueda en tiempo real
@@ -4568,6 +4644,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_leer_archivo, "text"),
     "cambiar_idioma":   ("Cambiar el idioma de la sesión: inglés, francés, chino, ruso, alemán, portugués",
                         skill_cambiar_idioma, "text"),
+    "configurar_api":   ("Guardar una API key en el .env desde el chat (groq, openrouter, anthropic, etc.)",
+                        skill_configurar_apikey, "text"),
 }
 
 

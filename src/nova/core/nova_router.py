@@ -215,6 +215,11 @@ OLLAMA_TOOL_MODELS: list[str] = [
 OLLAMA_AVAILABLE_MODELS: dict[int, list[str]] = {1: [], 2: [], 3: []}
 
 
+def _is_placeholder(key: str) -> bool:
+    """Detecta si un valor de API key es un placeholder del .env.example (no configurado)."""
+    return not key or "..." in key or len(key) < 20
+
+
 def _csv_env(name: str, default: str = "") -> list[str]:
     raw = os.getenv(name, default).strip()
     if not raw:
@@ -484,7 +489,7 @@ class NovaRouter:
 
         # ── Groq ─────────────────────────────────────────────
         groq_key = os.getenv("GROQ_API_KEY", "").strip()
-        if groq_key and not groq_key.startswith("gsk_..."):
+        if groq_key and not _is_placeholder(groq_key):
             self._groq_client = OpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=groq_key,
@@ -493,7 +498,7 @@ class NovaRouter:
 
         # ── OpenRouter ───────────────────────────────────────
         or_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-        if or_key and not or_key.startswith("sk-or-v1-..."):
+        if or_key and not _is_placeholder(or_key):
             self._or_client = OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=or_key,
@@ -502,7 +507,7 @@ class NovaRouter:
 
         # ── Cerebras (GRATIS: 14.400 req/día) ────────────────────
         cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
-        if cerebras_key and not cerebras_key.startswith("csk-..."):
+        if cerebras_key and not _is_placeholder(cerebras_key):
             self._cerebras_client = OpenAI(
                 base_url=CEREBRAS_BASE_URL,
                 api_key=cerebras_key,
@@ -511,7 +516,7 @@ class NovaRouter:
 
         # ── Mistral (GRATIS: free tier generoso) ─────────────────
         mistral_key = os.getenv("MISTRAL_API_KEY", "").strip()
-        if mistral_key and not mistral_key.startswith("..."):
+        if mistral_key and not _is_placeholder(mistral_key):
             self._mistral_client = OpenAI(
                 base_url=MISTRAL_BASE_URL,
                 api_key=mistral_key,
@@ -520,7 +525,7 @@ class NovaRouter:
 
         # ── Codestral (GRATIS: 2.000 req/día — solo código) ──────
         codestral_key = os.getenv("CODESTRAL_API_KEY", "").strip()
-        if codestral_key and not codestral_key.startswith("..."):
+        if codestral_key and not _is_placeholder(codestral_key):
             self._codestral_client = OpenAI(
                 base_url=CODESTRAL_BASE_URL,
                 api_key=codestral_key,
@@ -529,7 +534,7 @@ class NovaRouter:
 
         # ── DeepSeek ─────────────────────────────────────────────
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
-        if deepseek_key and not deepseek_key.startswith("sk-..."):
+        if deepseek_key and not _is_placeholder(deepseek_key):
             self._deepseek_client = OpenAI(
                 base_url=DEEPSEEK_BASE_URL,
                 api_key=deepseek_key,
@@ -538,7 +543,7 @@ class NovaRouter:
 
         # ── Anthropic / Claude ───────────────────────────────────
         anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
-        if anthropic_key and _HAS_ANTHROPIC:
+        if anthropic_key and not _is_placeholder(anthropic_key) and _HAS_ANTHROPIC:
             self._anthropic_client = _anthropic_sdk.Anthropic(api_key=anthropic_key)
             self._append_active_provider("Anthropic")
 
