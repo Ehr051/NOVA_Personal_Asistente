@@ -122,17 +122,25 @@ Ejemplos de uso:
     # ========== SYSTEM COMMANDS ==========
     system_parser = subparsers.add_parser('system', help='Comandos del sistema Nova')
     system_subparsers = system_parser.add_subparsers(dest='system_action', help='Acciones del sistema')
-    
+
     # system status
     system_subparsers.add_parser('status', help='Mostrar estado del sistema Nova')
-    
+
     # system logs
     logs_parser = system_subparsers.add_parser('logs', help='Mostrar logs recientes')
     logs_parser.add_argument('--lines', type=int, default=50, help='Número de líneas a mostrar')
-    
+
     # system cleanup
     system_subparsers.add_parser('cleanup', help='Limpiar archivos temporales y caché')
-    
+
+    # ========== DAEMON COMMANDS ==========
+    daemon_parser = subparsers.add_parser('daemon', help='Gestionar el proceso central de Nova (daemon)')
+    daemon_subparsers = daemon_parser.add_subparsers(dest='daemon_action', help='Acciones del daemon')
+    daemon_subparsers.add_parser('start',  help='Iniciar el daemon en background')
+    daemon_subparsers.add_parser('stop',   help='Detener el daemon')
+    daemon_subparsers.add_parser('status', help='Estado del daemon')
+    daemon_subparsers.add_parser('restart',help='Reiniciar el daemon')
+
     args = parser.parse_args()
 
     # Sin argumentos → chat directamente (comportamiento por defecto)
@@ -151,6 +159,8 @@ Ejemplos de uso:
         return handle_config_commands(args)
     elif args.command == 'system':
         return handle_system_commands(args)
+    elif args.command == 'daemon':
+        return handle_daemon_commands(args)
     else:
         print(f"Comando desconocido: {args.command}")
         return 1
@@ -513,6 +523,74 @@ def cmd_system_cleanup():
     print("🧹 Limpiando archivos temporales y caché")
     print("  (Implementación pendiente)")
     return 0
+
+def handle_daemon_commands(args):
+    """Gestionar el proceso central Nova Daemon."""
+    from nova.core.nova_client import NovaDaemonClient
+    from pathlib import Path
+    import signal as _signal
+
+    client = NovaDaemonClient(auto_start=False)
+    action = getattr(args, 'daemon_action', None) or 'status'
+
+    if action == 'status':
+        if client.ping():
+            st = client.status()
+            print(f"Nova Daemon — ACTIVO  (puerto {os.getenv('NOVA_DAEMON_PORT', '7899')})")
+            print(f"  Proveedores : {st.get('providers', '?')}")
+            print(f"  Sesiones    : {st.get('sessions', 0)}")
+            print(f"  Memoria     : {'OK' if st.get('memory') else 'desactivada'}")
+        else:
+            print(f"Nova Daemon — INACTIVO  (puerto {os.getenv('NOVA_DAEMON_PORT', '7899')})")
+            print("  Iniciar con: nova daemon start")
+        return 0
+
+    if action == 'start':
+        if client.ping():
+            print("Daemon ya está corriendo.")
+            return 0
+        print("Iniciando Nova Daemon en background...")
+        ok = client.ensure_daemon(wait=8.0)
+        if ok:
+            print("Daemon iniciado correctamente.")
+        else:
+            print("No se pudo iniciar el daemon. Revisá los logs.")
+            return 1
+        return 0
+
+    if action == 'stop':
+        if not client.ping():
+            print("Daemon no estaba corriendo.")
+            return 0
+        pid_file = Path.home() / ".nova" / "daemon.pid"
+        pid = None
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+            except Exception:
+                pass
+        try:
+            client.shutdown()
+            print("Señal de apagado enviada al daemon.")
+        except Exception:
+            pass
+        if pid:
+            import time
+            time.sleep(1.0)
+            try:
+                _signal.kill(pid, _signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, AttributeError):
+                pass
+        return 0
+
+    if action == 'restart':
+        handle_daemon_commands(type('A', (), {'daemon_action': 'stop'})())
+        import time; time.sleep(1.5)
+        return handle_daemon_commands(type('A', (), {'daemon_action': 'start'})())
+
+    print(f"Acción desconocida: {action}")
+    return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

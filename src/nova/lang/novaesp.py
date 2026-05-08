@@ -119,6 +119,34 @@ def _is_my_voice(wav_bytes: bytes) -> bool:
         log.warning("[Speaker] Error verificando voz: %s — rechazando por seguridad", e)
         return False   # falla → rechazar (no abrir a cualquier voz)
 
+def _is_speech_not_music(audio: "sr.AudioData") -> bool:
+    """
+    Heurística rápida para distinguir habla de música usando ZCR y energía.
+    Música: ZCR alto y uniforme. Habla: ZCR variable con pausas.
+    Retorna True si parece habla, False si parece música/ruido tonal.
+    Si librosa no está disponible, siempre retorna True (no filtra).
+    """
+    try:
+        import numpy as np
+        import librosa
+        wav = audio.get_wav_data()
+        y, sr_ = librosa.load(__import__("io").BytesIO(wav), sr=16000, mono=True)
+        if len(y) < 16000 * 0.5:   # menos de 0.5s → no suficiente para clasificar
+            return True
+        zcr = librosa.feature.zero_crossing_rate(y, frame_length=512, hop_length=256)[0]
+        # Música tiende a tener ZCR alto (>0.10) y baja varianza
+        # Habla tiene ZCR variable con alta desviación estándar
+        zcr_mean = float(zcr.mean())
+        zcr_std  = float(zcr.std())
+        # Si ZCR promedio es alto Y varianza es baja → probable música
+        if zcr_mean > 0.12 and zcr_std < 0.04:
+            log.debug("[STT] filtrado por ZCR (música/tono): mean=%.3f std=%.3f", zcr_mean, zcr_std)
+            return False
+        return True
+    except Exception:
+        return True   # sin librosa → no filtra (fail open)
+
+
 # ─── Single instance lock ────────────────────────────────────────────────────
 _PID_FILE = os.path.expanduser("__DOTNOVA_PATH__/nova.pid")
 
@@ -596,9 +624,15 @@ def listen(
             hud.put_state(status="IDLE")
             return None   # voz de otra persona → ignorar sin print
 
+    # Obtener texto con confianza (show_all=True para filtrar música/TV)
     try:
-        # "es" cubre todas las variantes del español (AR, ES, MX…)
-        text = recognizer.recognize_google(audio, language="es")
+        result_all = recognizer.recognize_google(audio, language="es", show_all=True)
+        if not result_all or not result_all.get("alternative"):
+            hud.put_state(status="IDLE")
+            return None
+        top = result_all["alternative"][0]
+        text       = top.get("transcript", "").strip()
+        confidence = float(top.get("confidence", 1.0))   # 1.0 si Google no lo devuelve
     except sr.UnknownValueError:
         log.debug("[STT] audio capturado pero no reconocido (ruido/silencio)")
         hud.put_state(status="IDLE")
@@ -608,25 +642,35 @@ def listen(
         hud.put_state(status="IDLE")
         return None
 
+    if not text:
+        hud.put_state(status="IDLE")
+        return None
+
     if dictation_mode:
         hud.put_state(status="THINKING", user_text=text)
-        return text.strip()
+        return text
 
     # Con perfil de voz verificado → saltamos wake word (ya sabemos que es el usuario)
     if _SPEAKER_VERIFY:
         hud.put_state(status="THINKING", user_text=text)
-        return text.strip()
+        return text
 
     # Sin perfil de voz: wake word SIEMPRE obligatoria para evitar activaciones por música/TV
     cmd = _extract_command(text)
 
     if cmd is None:
-        # Excepción legítima: estamos en medio de una conversación activa
-        if context_active and len(text.strip().split()) >= 2:
+        # Ventana de conversación activa: aceptar follow-up SOLO si parece habla humana dirigida
+        _ctx_confidence = float(os.getenv("CONTEXT_CONFIDENCE", "0.75"))
+        _ctx_min_words  = int(os.getenv("CONTEXT_MIN_WORDS", "3"))
+        words = text.strip().split()
+        if (context_active
+                and len(words) >= _ctx_min_words
+                and confidence >= _ctx_confidence
+                and _is_speech_not_music(audio)):
             hud.put_state(status="THINKING", user_text=text)
-            return text.strip()
-        # Sin wake word y sin perfil → ignorar siempre (aunque REQUIRE_WAKE_WORD=0)
-        log.debug("[STT] ignorado sin wake word (sin perfil de voz): '%s'", text[:50])
+            return text
+        log.debug("[STT] ignorado sin wake word (conf=%.2f, words=%d): '%s'",
+                  confidence, len(words), text[:50])
         hud.put_state(status="IDLE")
         return None
 

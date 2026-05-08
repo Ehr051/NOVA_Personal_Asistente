@@ -21,21 +21,56 @@ Texto sin `/` → enrutado al LLM (Ollama → Groq → OpenRouter) con skills + 
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import subprocess
 import datetime
 from typing import Callable, Optional
 
+log = logging.getLogger(__name__)
+
 # Carga lazy de los componentes pesados (no bloquear el import del módulo)
 _router = None
 _skills = None
-_neuro = None
+_neuro  = None
+_daemon_client = None   # NovaDaemonClient si el daemon está corriendo
+
+
+def _try_daemon() -> bool:
+    """Intenta conectar al daemon. Retorna True si disponible."""
+    global _daemon_client
+    try:
+        from nova.core.nova_client import NovaDaemonClient
+        c = NovaDaemonClient(auto_start=False)
+        if c.ping():
+            _daemon_client = c
+            return True
+    except Exception:
+        pass
+    _daemon_client = None
+    return False
 
 
 def _lazy_init():
     """Inicializa router, skills y memoria una sola vez."""
     global _router, _skills, _neuro
+
+    # Preferir daemon: evita conflicto de Qdrant entre REPL y HUD
+    if _try_daemon():
+        # Con daemon activo no instanciamos router/memoria locales
+        if _skills is None:
+            try:
+                from nova.tools import nova_skills
+                _skills = nova_skills
+            except Exception as e:
+                print(f"[REPL] Aviso: skills no disponibles ({e})")
+                _skills = False
+        if _router is None:
+            _router = False  # daemon maneja el router
+        if _neuro is None:
+            _neuro = False   # daemon maneja la memoria
+        return
 
     if _router is None:
         try:
@@ -609,7 +644,7 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
 
 # ─── Estado de sesión ────────────────────────────────────────────────────────
 
-_session_state: dict = {"history": []}
+_session_state: dict = {"history": [], "id": "repl"}
 
 
 def _dispatch_slash(line: str) -> Optional[str]:
@@ -637,7 +672,7 @@ def _route_to_llm(text: str) -> str:
 
     history = _session_state["history"]
 
-    # 1. Probar primero las skills (matcheo regex)
+    # 1. Probar primero las skills locales (matcheo regex — sin latencia de red)
     if _skills:
         skill_resp = _skills.dispatch(text)
         if skill_resp:
@@ -645,10 +680,21 @@ def _route_to_llm(text: str) -> str:
             history.append({"role": "assistant", "content": skill_resp})
             return skill_resp
 
-    # 1b. Si regex falló, dejar que el LLM elija la tool (llm_dispatch)
+    # 2. Usar daemon si está disponible (evita conflicto Qdrant/Router con HUD)
+    if _daemon_client is not None:
+        try:
+            session_id = _session_state.get("id", "repl")
+            response = _daemon_client.chat(text, session=session_id)
+            history.append({"role": "user", "content": text})
+            history.append({"role": "assistant", "content": response})
+            return response
+        except Exception as e:
+            log.warning("[REPL] Daemon falló, usando router local: %s", e)
+            # Fall through to direct router below
+
+    # 2b. Si regex falló, dejar que el LLM elija la tool (llm_dispatch)
     if _skills and _router:
         try:
-            # Pasar último mensaje de contexto para resolver referencias vagas ("eso", "esto")
             last_assistant = next(
                 (m["content"] for m in reversed(history) if m.get("role") == "assistant"), ""
             )
@@ -667,7 +713,7 @@ def _route_to_llm(text: str) -> str:
         except Exception:
             pass
 
-    # 2. Fallback al router LLM (conversacional)
+    # 3. Fallback al router LLM local (conversacional)
     if not _router or _router is False:
         return "Router LLM no disponible. Probá las skills con /skills."
 
