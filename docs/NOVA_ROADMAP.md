@@ -1,6 +1,6 @@
 # Nova — Estado del Proyecto y Roadmap
 > **Archivo único de contexto.** Cualquier agente que tome este proyecto lee esto primero.  
-> Última actualización: **2026-05-08 (sesión 4)**
+> Última actualización: **2026-05-08 (sesión 5)**
 
 ---
 
@@ -18,7 +18,7 @@ Logging          ███████████████████░  9
 Telegram full    ████████████████████ 100%  (polling + webhook n8n)
 OCR/Documentos   ████████████████████ 100%  (markitdown + pytesseract)
 Modo políglota   ████████████████████ 100%  (explícito: ES/EN/FR/PT/DE/RU/ZH)
-Cross-platform   ████░░░░░░░░░░░░░░░░  20%  (install.py + API key fix listo)
+Cross-platform   ████████░░░░░░░░░░░░  40%  (installer wizard completo Win/Mac/Linux)
 Plugins/Web UI   ░░░░░░░░░░░░░░░░░░░░   0%
 Daemon           ████████████████████ 100%  (TCP 7899, REPL + HUD integrados)
 ```
@@ -223,6 +223,18 @@ TELEGRAM_CHAT_ID=...
 ---
 
 ## Log de sesiones
+
+### 2026-05-08 (sesión 5)
+- ✅ **Timeout LLM** — `_API_TIMEOUT=10s` con `timeout=` directo en OpenAI clients; fallback rápido si proveedor no responde en tiempo
+- ✅ **Cámara** — patrón "que ves en mi camara" / "qué ves en mi cámara" no matcheaba; agregado `en\s+(?:mi\s+)?` al regex de `skill_ver_camara`
+- ✅ **Crash silencioso Windows** — `main.py` captura todas las excepciones, muestra MessageBox + escribe `nova_crash.log` junto al `.exe`
+- ✅ **nova.spec** — 20+ hiddenimports agregados: `nova_client`, `nova_daemon`, `nova_hud`, `PyQt5.QtWebEngine`, `qdrant_client.http`, etc.
+- ✅ **Installer completo** — wizard Inno Setup con 2 páginas: LLM Providers (6 campos) + Integraciones (4 campos); `DisableDirPage=no`
+- ✅ **install.py** — pregunta 10 keys organizadas en 2 grupos; detecta escritorio en ES/EN/FR/DE; mensaje final claro
+- ✅ **Modelos dinámicos** — `add_custom_provider()` en router + `skill_agregar_modelo()` + `skill_listar_modelos()`; formato `CUSTOM_PROVIDERS=Name|url|key|model`
+- ✅ **ICO multi-resolución** — 6 tamaños (16/32/48/64/128/256), `IconLocation` con `,0`
+- ✅ **Daemon HUD** — `novaesp.py` usa `NovaDaemonClient` cuando el daemon está activo; sin Qdrant propio
+- Commits: `6d3bd36`, `11fba8a`, `348acf5`, `ba4151b`, `4d7207a`, `38a17dd`
 
 ### 2026-05-07 (sesión 2)
 - ✅ **OCR + MarkItDown** — `nova_ocr.py`: PDF/DOCX/XLSX/imágenes → Markdown, `skill_leer_archivo` en nova_skills.py

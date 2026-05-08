@@ -17,15 +17,14 @@ Ir a [**Releases**](https://github.com/Ehr051/NOVA_Personal_Asistente/releases/l
 | macOS | `Nova-macOS.zip` | Descomprimí y ejecutá |
 | Linux | `Nova-Linux.tar.gz` | Descomprimí y ejecutá |
 
-En la primera ejecución Nova te pide tus API keys y queda configurado.
+El wizard te pide las API keys durante la instalación. Podés dejar cualquier campo vacío y configurarlo después diciendo _"nova, mi api de groq es gsk_xxxx"_.
 
 ### Opción 2 — Desde el código fuente
 
 ```bash
 git clone https://github.com/Ehr051/NOVA_Personal_Asistente.git
 cd NOVA_Personal_Asistente
-python install.py        # instala dependencias según tu OS
-cp .env.example .env     # configurar API keys
+python install.py        # instala dependencias + pide API keys + crea lanzador en Escritorio
 ```
 
 **macOS:**

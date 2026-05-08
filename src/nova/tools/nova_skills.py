@@ -4136,7 +4136,8 @@ _INTENTS: list[tuple] = [
     (r"(?:qué ves|que ves|analiz[aá]|describí?|qué hay en|qué estoy viendo)\s+"
      r"(?:la\s+)?(?:pantalla|screen)(?:\s+.*)?",                               skill_ver_pantalla, 0),
     (r"(?:mirá|mira|qué ves|que ves|analiz[aá]|describí?)\s+"
-     r"(?:con\s+la\s+|por\s+la\s+)?(?:cámara|camara|webcam)(?:\s+.*)?",       skill_ver_camara,   0),
+     r"(?:en\s+(?:mi\s+|tu\s+)?|con\s+la\s+|por\s+la\s+)?(?:cámara|camara|webcam)(?:\s+.*)?",
+                                                                               skill_ver_camara,   0),
     (r"(?:identific[aá][r]?|reconoc[eé][r]?|qué objeto|qué es esto)\s*"
      r"(?:con la cámara|frente a la cámara|esto)?",                            skill_identificar_objeto, None),
     (r"(?:recre[aá][r]?|mode[lá]?[r]?|hace[r]?\s+(?:en|para))\s+"

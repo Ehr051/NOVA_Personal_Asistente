@@ -42,6 +42,11 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from openai import OpenAI
 
+# Timeout máximo por proveedor.  Si un proveedor no responde en este tiempo
+# se salta al siguiente.  Ajustable con NOVA_API_TIMEOUT en .env.
+# 10s es suficiente para respuestas normales; redes lentas pueden usar 15-20.
+_API_TIMEOUT = int(os.getenv("NOVA_API_TIMEOUT", "10"))
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -484,7 +489,7 @@ class NovaRouter:
             or "openclaw-local"
         )
         if openclaw_base:
-            self._openclaw_client = OpenAI(base_url=openclaw_base, api_key=openclaw_key)
+            self._openclaw_client = OpenAI(base_url=openclaw_base, api_key=openclaw_key, timeout=_API_TIMEOUT)
             self._openclaw_ready = self._probe_openclaw_http(openclaw_base, openclaw_key)
             if self._openclaw_ready:
                 self._append_active_provider("OpenClaw")
@@ -497,6 +502,7 @@ class NovaRouter:
             self._groq_client = OpenAI(
                 base_url="https://api.groq.com/openai/v1",
                 api_key=groq_key,
+                timeout=_API_TIMEOUT,
             )
             self._append_active_provider("Groq")
 
@@ -506,6 +512,7 @@ class NovaRouter:
             self._or_client = OpenAI(
                 base_url="https://openrouter.ai/api/v1",
                 api_key=or_key,
+                timeout=_API_TIMEOUT,
             )
             self._append_active_provider("OpenRouter")
 
@@ -515,6 +522,7 @@ class NovaRouter:
             self._cerebras_client = OpenAI(
                 base_url=CEREBRAS_BASE_URL,
                 api_key=cerebras_key,
+                timeout=_API_TIMEOUT,
             )
             self._append_active_provider("Cerebras")
 
@@ -524,6 +532,7 @@ class NovaRouter:
             self._mistral_client = OpenAI(
                 base_url=MISTRAL_BASE_URL,
                 api_key=mistral_key,
+                timeout=_API_TIMEOUT,
             )
             self._append_active_provider("Mistral")
 
@@ -533,6 +542,7 @@ class NovaRouter:
             self._codestral_client = OpenAI(
                 base_url=CODESTRAL_BASE_URL,
                 api_key=codestral_key,
+                timeout=_API_TIMEOUT,
             )
             self._append_active_provider("Codestral")
 
@@ -542,6 +552,7 @@ class NovaRouter:
             self._deepseek_client = OpenAI(
                 base_url=DEEPSEEK_BASE_URL,
                 api_key=deepseek_key,
+                timeout=_API_TIMEOUT,
             )
             self._append_active_provider("DeepSeek")
 
