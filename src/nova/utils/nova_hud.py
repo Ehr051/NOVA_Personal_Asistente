@@ -555,20 +555,33 @@ class NovaWindow(QWidget):
         QTimer.singleShot(2000, self._install_view_filter)
         # macOS: Qt.WindowStaysOnTopHint doesn't fight other apps — use Cocoa level
         if sys.platform == "darwin":
-            QTimer.singleShot(300, self._set_mac_floating_level)
+            QTimer.singleShot(500,  self._set_mac_floating_level)
+            QTimer.singleShot(2500, self._set_mac_floating_level)  # retry after WebEngine init
 
     def _set_mac_floating_level(self):
-        """Set NSFloatingWindowLevel so HUD stays above all normal windows on macOS."""
+        """Set NSFloatingWindowLevel (3) so HUD stays above all normal windows on macOS."""
+        import ctypes, ctypes.util
         try:
-            import objc
-            from AppKit import NSFloatingWindowLevel
-            ptr = int(self.winId())
-            ns_view = objc.objc_object(c_void_p=ptr)
-            ns_window = ns_view.window()
-            if ns_window:
-                ns_window.setLevel_(NSFloatingWindowLevel)  # 3 — above normal, below system
+            # ctypes approach — works without PyObjC
+            lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+            lib.sel_registerName.restype = ctypes.c_void_p
+            lib.sel_registerName.argtypes = [ctypes.c_char_p]
+            lib.objc_msgSend.restype = ctypes.c_void_p
+            lib.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+            view_ptr = int(self.winId())
+            sel_window = lib.sel_registerName(b"window")
+            win_ptr = lib.objc_msgSend(view_ptr, sel_window)
+            if win_ptr:
+                # setLevel_ takes NSInteger
+                lib.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+                sel_level = lib.sel_registerName(b"setLevel:")
+                lib.objc_msgSend(win_ptr, sel_level, 3)  # NSFloatingWindowLevel = 3
+                lib.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+                sel_order = lib.sel_registerName(b"orderFrontRegardless")
+                lib.objc_msgSend(win_ptr, sel_order)
         except Exception:
-            pass  # PyObjC not available — Qt flag is the best we can do
+            pass
 
     def _install_view_filter(self):
         from PyQt5.QtWidgets import QWidget

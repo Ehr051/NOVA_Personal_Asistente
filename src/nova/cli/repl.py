@@ -429,6 +429,23 @@ def cmd_stats(_: str) -> Optional[str]:
         return f"Error leyendo estadísticas: {e}"
 
 
+import pathlib as _pathlib
+_NOVA_LOG_FILE = _pathlib.Path.home() / ".nova" / "nova.log"
+
+
+def cmd_logs(args: str) -> Optional[str]:
+    """Muestra las últimas líneas del log. /logs [N] — default 50."""
+    try:
+        n = int(args.strip()) if args.strip().isdigit() else 50
+    except ValueError:
+        n = 50
+    if not _NOVA_LOG_FILE.exists():
+        return f"No hay log todavía ({_NOVA_LOG_FILE}).\nEn modo debug: NOVA_DEBUG=1 ./launch_nova.sh"
+    lines = _NOVA_LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    tail = lines[-n:]
+    return f"[Log — últimas {len(tail)} líneas de {_NOVA_LOG_FILE}]\n\n" + "\n".join(tail)
+
+
 def cmd_doctor(arg: str) -> Optional[str]:
     """Diagnóstico del sistema. --fix intenta reparar automáticamente."""
     fix_mode = "--fix" in arg
@@ -1534,6 +1551,7 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/olvidar":   (cmd_olvidar,     "Borrar hecho de memoria"),
     "/estado":    (cmd_estado,      "Estado del sistema"),
     "/doctor":    (cmd_doctor,      "Diagnóstico del sistema  (--fix para reparar)"),
+    "/logs":      (cmd_logs,        "Ver log del sistema: /logs [N líneas]"),
     "/modelo":    (cmd_modelo,      "Ver o cambiar proveedor: /modelo claude | local | gratis"),
     "/tarea":     (cmd_tarea,       "Orquestar tarea compleja con herramientas reales"),
     "/stats":     (cmd_stats,       "Estadísticas de uso de modelos LLM"),

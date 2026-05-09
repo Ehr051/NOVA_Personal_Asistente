@@ -4,13 +4,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Si viene de Finder, abrir Terminal y volver a ejecutar
-if [ -z "$TERM" ]; then
-    osascript -e "tell application \"Terminal\" to do script \"cd '$SCRIPT_DIR' && ./launch_nova.sh\" activate"
-    exit 0
-fi
-
-# Activar entorno virtual si existe
+# Activar entorno virtual
 if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
     source "$SCRIPT_DIR/.venv/bin/activate"
     PYTHON="$SCRIPT_DIR/.venv/bin/python"
@@ -24,7 +18,15 @@ else
 fi
 
 export PYTHONPATH="$SCRIPT_DIR:$SCRIPT_DIR/src"
+mkdir -p ~/.nova
 
-clear
-echo "Iniciando Nova Personal Assistant..."
-"$PYTHON" main.py
+# Modo debug: NOVA_DEBUG=1 ./launch_nova.sh  →  muestra output en terminal
+if [ "${NOVA_DEBUG:-0}" = "1" ]; then
+    clear
+    echo "Nova — modo debug (logs en pantalla)"
+    exec "$PYTHON" main.py 2>&1 | tee -a ~/.nova/nova.log
+fi
+
+# Modo normal: logs a archivo, sin terminal visible
+# Si viene de Finder (sin TERM), lanzar directamente
+exec "$PYTHON" main.py >> ~/.nova/nova.log 2>&1
