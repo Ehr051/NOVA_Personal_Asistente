@@ -9,7 +9,9 @@ SpeechRecognition
 edge-tts>=6.1.9
 gtts
 pygame>=2.0.0
-librosa  # verificación de hablante (speaker ID) — requiere numpy
+# librosa  ← opcional — verificación de hablante (speaker ID)
+#             pip install librosa --only-binary :all:
+#             Sin librosa: Nova funciona igual pero no verifica identidad del hablante
 # PyAudio  ← instalar manualmente si falla: pip install PyAudio
 #            Linux: sudo apt install portaudio19-dev && pip install PyAudio
 #            Windows: pip install PyAudio --only-binary :all:
