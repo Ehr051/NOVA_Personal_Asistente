@@ -68,6 +68,7 @@ Con al menos una key Nova ya funciona. Ollama es opcional pero habilita modo com
 - **Streaming token a token** — el REPL imprime la respuesta en tiempo real, como ChatGPT
 - **Daemon multi-sesión** — proceso central TCP (puerto 7899) que arranca automáticamente; REPL y HUD se conectan como clientes, eliminando conflictos de Qdrant
 - **Visión** — analiza cámara y pantalla vía Ollama local o OpenRouter como fallback
+- **Agente autónomo** — `route_agentic()`: planifica, ejecuta tools en loop (Plan→Execute→Verify) y muestra el proceso en tiempo real, como Devin/Claude Code
 - **185 agentes especializados** — Firmware Engineer, Software Architect, AI Engineer, Backend Architect y más, ejecutados con proveedores gratuitos
 - **Modelado 3D en Blender** — genera scripts Python, los envía al addon MCP y auto-evalúa el resultado con visión
 - **Memoria neuronal persistente** — Mem0 + Qdrant + embeddings locales
@@ -91,6 +92,8 @@ nova> traduce "hello world" al español
 nova> cuánto vale bitcoin ahora
 nova> modela un tornillo hexagonal M6 en Blender
 nova> recuerda que prefiero Python sobre JavaScript
+nova> /agente buscá el precio de bitcoin y guardalo en una nota del Cerebro
+nova> modo agente: analizá el repositorio y proponé 3 mejoras
 ```
 
 ### Comandos del sistema
@@ -120,19 +123,21 @@ nova> recuerda que prefiero Python sobre JavaScript
 
 ```
 src/nova/
-├── cli/repl.py                  REPL principal (streaming token a token)
+├── cli/repl.py                  REPL principal (streaming token a token, /agente agentic loop)
 ├── core/
 │   ├── nova_router.py           Router: Ollama → Groq → Cerebras → Mistral → OpenRouter
+│   │                            + route_agentic() (Plan→Execute→Verify) + _call_with_tools()
 │   ├── nova_daemon.py           Daemon TCP (puerto 7899) — singleton router + Qdrant
 │   └── nova_client.py           Cliente thin: chat(), chat_stream(), ping(), ensure_daemon()
 ├── lang/novaesp.py              HUD + loop de voz
 ├── platform/                   Adaptadores por OS (macOS / Windows / Linux)
 ├── connectors/
 │   ├── nova_blender.py          Blender MCP + auto-evaluación con visión
-│   ├── nova_specialist.py       185 agentes especializados
+│   ├── nova_specialist.py       185 agentes especializados (diff+confirm ON by default)
 │   └── nova_vision.py           Visión: cámara y pantalla
 └── tools/
-    ├── nova_skills.py           100+ skills con dispatch regex + LLM fallback
+    ├── nova_skills.py           100+ skills · execute_tool() · skill_agente()
+    ├── nova_tools_schemas.py    Auto-genera 48 JSON schemas OpenAI-compatible desde _TOOL_CATALOG
     └── nova_neuro_memory.py     Mem0 + Qdrant + embeddings locales
 ```
 
@@ -144,7 +149,8 @@ src/nova/
 | `NOVA_DAEMON_PORT` | `7899` | Puerto TCP del daemon |
 | `NOVA_LOG_LEVEL` | `WARNING` | Nivel de log (`DEBUG`, `INFO`, `WARNING`) |
 | `MAX_HISTORY` | `20` | Turnos de historial en memoria por sesión |
+| `NOVA_DIFF_CONFIRM` | `1` | Mostrar diff y pedir confirmación antes de escribir archivos (`0` para desactivar) |
 
 ---
 
-*Versión 3.7 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*
+*Versión 3.8 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*

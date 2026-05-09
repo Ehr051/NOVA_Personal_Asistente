@@ -1,6 +1,6 @@
 # Nova — Estado del Proyecto y Roadmap
 > **Archivo único de contexto.** Cualquier agente que tome este proyecto lee esto primero.  
-> Última actualización: **2026-05-08 (sesión 6)**
+> Última actualización: **2026-05-08 (sesión 7)**
 
 ---
 
@@ -20,6 +20,7 @@ OCR/Documentos   ████████████████████ 10
 Modo políglota   ████████████████████ 100%  (explícito: ES/EN/FR/PT/DE/RU/ZH)
 Cross-platform   ████████░░░░░░░░░░░░  40%  (installer .venv + uninstall)
 Streaming LLM    ████████████████████ 100%  (REPL + daemon, token-by-token)
+Tool calling     ████████████████████ 100%  (OpenAI JSON schema, 48 tools, agentic loop)
 Plugins/Web UI   ░░░░░░░░░░░░░░░░░░░░   0%
 Daemon           ████████████████████ 100%  (TCP 7899, auto-launch, streaming)
 ```
@@ -98,6 +99,9 @@ Daemon           ████████████████████ 10
 | Daemon/multi-sesión | `src/nova/core/nova_daemon.py` + `nova_client.py` | ✅ |
 | Streaming LLM | `nova_router.route_stream()` + daemon `chat_stream` | ✅ |
 | .venv + uninstall | `install.py` | ✅ |
+| Tool calling nativo | `nova_tools_schemas.py` + `nova_router._call_with_tools()` | ✅ |
+| Agentic loop | `nova_router.route_agentic()` Plan→Execute→Verify | ✅ |
+| Diff+confirm por defecto | `NOVA_DIFF_CONFIRM` default `"1"` | ✅ |
 
 ---
 
@@ -114,6 +118,16 @@ Daemon           ████████████████████ 10
 | — | **Modo políglota** | ✅ `_SESSION_LANG` explícito (usuario activa), ES/EN/FR/PT/DE/RU/ZH, TTS con voz del idioma |
 | — | **Memoria/RAG** | ✅ `nova_rag_obsidian.py` → `legacy/`; vault completo en contexto (todas las carpetas) |
 | — | **Requirements + CI** | ✅ `requirements.txt` completo, `install.py` cross-platform, GitHub Actions release por tag |
+
+### ✅ Completado (sesión 7)
+
+| # | Feature | Estado |
+|---|---|---|
+| — | **Tool calling nativo** | ✅ `nova_tools_schemas.py`: auto-genera 48 JSON schemas OpenAI-compatible desde `_TOOL_CATALOG` |
+| — | **Agentic loop** | ✅ `route_agentic()`: Plan (LLM genera plan numerado) → Execute (loop tool calls con progress_cb) → Verify (síntesis) |
+| — | **`execute_tool()`** | ✅ Ejecuta cualquier tool del catálogo por nombre+args dict; usa `llm_dispatch` como primera opción |
+| — | **`skill_agente()`** | ✅ Modo agente autónomo accesible por voz ("modo agente: X") y por REPL (`/agente X`) |
+| — | **Diff+confirm por defecto** | ✅ `NOVA_DIFF_CONFIRM` default `"0"` → `"1"`; apagable con env var |
 
 ### ✅ Completado (sesión 6)
 
@@ -172,6 +186,7 @@ Daemon           ████████████████████ 10
 | Feedback loop ejecución | ✅ | ✗ | ✗ | ✅ |
 | LSP semántico | ✅ | ✅ | ✅ | ✅ |
 | Multi-sesión / daemon | ✅ | ✅ | ✅ | ✅ auto-launch + streaming |
+| Tool calling nativo | ✅ | parcial | ✗ | ✅ 48 tools, agentic loop |
 
 ---
 
@@ -201,7 +216,7 @@ OLLAMA_BASE_URL=http://127.0.0.1:11434/v1   # LLM local
 CEREBRO_VAULT=~/Cerebro       # Vault Obsidian
 ASSISTANT_NAME=Nova
 NOVA_VOICE=Reed               # macOS TTS
-NOVA_DIFF_CONFIRM=0           # 1 = confirmar diffs antes de aplicar
+NOVA_DIFF_CONFIRM=1           # 1 = confirmar diffs antes de aplicar (default ON desde v3.8)
 NOVA_AUTO_TESTS=0             # 1 = pytest automático al escribir .py
 SESSION_BUDGET_USD=0.10
 TELEGRAM_BOT_TOKEN=...
@@ -235,6 +250,22 @@ TELEGRAM_CHAT_ID=...
 ---
 
 ## Log de sesiones
+
+### 2026-05-08 (sesión 7)
+- ✅ **Tool calling nativo** — `nova_tools_schemas.py`: auto-genera 48 JSON schemas OpenAI-compat desde `_TOOL_CATALOG`; `route_with_tools_simple()` para dispatch rápido; `llm_dispatch()` intenta tool calling antes de text-matching
+- ✅ **Agentic loop** — `route_agentic()` en router: Phase 1 genera plan numerado visible al usuario, Phase 2 loop de tool calls con `progress_cb`, Phase 3 síntesis si se agota `max_iter`
+- ✅ **`execute_tool(name, kwargs)`** — ejecuta cualquier tool del catálogo con args dict; maneja `arg_type=None/text/location/custom`
+- ✅ **`skill_agente()`** + intents de voz — "modo agente: X" / "autónomamente X" activan el loop; `/agente X` en REPL rutea a agentic loop si no hay sub-agente nombrado
+- ✅ **Diff+confirm por defecto** — `NOVA_DIFF_CONFIRM` default `"0"` → `"1"` en `nova_specialist.py`; apagable con env var
+- Commit: `3acbfe5`
+
+### 2026-05-08 (sesión 6)
+- ✅ **Daemon auto-launch** — `main.py` arranca daemon antes del HUD; `NovaDaemonClient(auto_start=True).ensure_daemon(wait=6s)`
+- ✅ **Streaming LLM — REPL** — `route_stream()` en router + `chat_stream()` en daemon + client; REPL imprime token a token
+- ✅ **Fix daemon `_handle_chat`** — Corregido: `router.chat()` → `router.route()`, `_build_messages` firma incorrecta → construido inline
+- ✅ **.venv isolation** — `install.py` crea `.venv/`, launchers activan venv automáticamente
+- ✅ **`--uninstall`** — `python install.py --uninstall` elimina `.venv`, lanzadores, PATH Windows
+- Commits: `9784b6d`, otros
 
 ### 2026-05-08 (sesión 5)
 - ✅ **Timeout LLM** — `_API_TIMEOUT=10s` con `timeout=` directo en OpenAI clients; fallback rápido si proveedor no responde en tiempo
