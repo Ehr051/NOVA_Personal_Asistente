@@ -261,10 +261,19 @@ def cmd_agente(arg: str) -> Optional[str]:
             from nova.agents.orchestrator_agent import orchestrator_execute
             return orchestrator_execute(rest, max_turns=5)
         else:
-            return (
-                f"Agente desconocido: '{parts[0]}'. "
-                "Opciones: briefing · búsqueda · código · orquestador"
-            )
+            # Modo agente autónomo: planifica y ejecuta con tool calling nativo
+            goal = arg.strip()
+            if not goal:
+                return (
+                    "Uso: /agente <objetivo>\n"
+                    "  briefing          Briefing del día\n"
+                    "  búsqueda <tema>   Investigación profunda\n"
+                    "  código <tarea>    Asistente de código\n"
+                    "  orquestador <obj> Razonamiento multi-turno\n"
+                    "  <cualquier texto> Agente autónomo con tool calling"
+                )
+            from nova.tools.nova_skills import skill_agente
+            return skill_agente(goal)
     except Exception as e:
         return f"Error ejecutando agente: {e}"
 

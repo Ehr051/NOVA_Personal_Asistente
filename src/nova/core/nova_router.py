@@ -756,6 +756,250 @@ class NovaRouter:
         except Exception as exc:
             yield f"Error: {exc}"
 
+    # ── Tool calling ─────────────────────────────────────────────────────────
+
+    def _call_with_tools(
+        self,
+        client: "OpenAI",
+        provider: str,
+        model: str,
+        messages: list[dict],
+        max_tokens: int,
+        temperature: float,
+        tools: list[dict],
+        tool_choice: str = "auto",
+        extra_headers: dict | None = None,
+    ) -> dict:
+        """
+        Llamada OpenAI con function calling. Retorna:
+          {"text": str, "tool_calls": [...], "tokens": int}
+        tool_calls = [{"id":..., "type":"function",
+                        "function":{"name":..., "arguments": dict}}]
+        """
+        import json as _json
+        headers: dict = {}
+        if provider in ("openrouter", "OpenRouter"):
+            headers.update({
+                "HTTP-Referer": "https://github.com/nova-assistant",
+                "X-Title": "NOVA Personal Assistant",
+            })
+        if extra_headers:
+            headers.update(extra_headers)
+
+        actual_messages = messages
+        if provider in ("ollama", "Ollama") and self._should_disable_thinking(model):
+            actual_messages = self._disable_thinking_in_messages(messages)
+
+        extra = {"extra_headers": headers} if headers else {}
+        r = client.chat.completions.create(
+            model=model, messages=actual_messages,
+            max_tokens=max_tokens, temperature=temperature,
+            tools=tools, tool_choice=tool_choice,
+            **extra,
+        )
+        msg = r.choices[0].message
+        text = msg.content or ""
+        raw_calls = msg.tool_calls or []
+        tool_calls: list[dict] = []
+        for tc in raw_calls:
+            try:
+                args = _json.loads(tc.function.arguments or "{}")
+            except Exception:
+                args = {}
+            tool_calls.append({
+                "id":   tc.id,
+                "type": "function",
+                "function": {"name": tc.function.name, "arguments": args},
+            })
+        tokens = r.usage.total_tokens if r.usage else 0
+        return {"text": text, "tool_calls": tool_calls, "tokens": tokens}
+
+    def route_with_tools_simple(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        force_tier: int = 1,
+        max_tokens: int = 50,
+        temperature: float = 0.0,
+    ) -> dict:
+        """
+        1 turno con function calling. Retorna el dict raw de _call_with_tools.
+        Itera providers hasta encontrar uno que responda sin error.
+        Si todos fallan devuelve {"text": "", "tool_calls": [], "tokens": 0}.
+        """
+        actual_tier = self._apply_budget_cap(force_tier)
+        for provider in self.provider_order:
+            client = model = None
+            extra_headers: dict = {}
+            if provider == "ollama" and self._ollama_client and self._ollama_ready:
+                models = _with_tier1_fallback(self._ollama_models, actual_tier)
+                if not models:
+                    continue
+                client, model = self._ollama_client, models[0]
+            elif provider == "groq" and self._groq_client:
+                models = _with_tier1_fallback(GROQ_MODELS, actual_tier)
+                client, model = self._groq_client, (models[0] if models else "llama-3.1-8b-instant")
+            elif provider == "cerebras" and self._cerebras_client:
+                models = _with_tier1_fallback(CEREBRAS_MODELS, actual_tier)
+                client, model = self._cerebras_client, (models[0] if models else "llama3.1-8b")
+            elif provider == "mistral" and self._mistral_client:
+                models = _with_tier1_fallback(MISTRAL_MODELS, actual_tier)
+                client, model = self._mistral_client, (models[0] if models else "mistral-small-latest")
+            elif provider == "openrouter" and self._or_client:
+                models = _with_tier1_fallback(OPENROUTER_MODELS, actual_tier)
+                client, model = self._or_client, (models[0] if models else "meta-llama/llama-3.1-8b-instruct:free")
+                extra_headers = {
+                    "HTTP-Referer": "https://github.com/nova-assistant",
+                    "X-Title": "NOVA Personal Assistant",
+                }
+            elif provider == "deepseek" and self._deepseek_client:
+                models = _with_tier1_fallback(DEEPSEEK_MODELS, actual_tier)
+                client, model = self._deepseek_client, (models[0] if models else "deepseek-v4-flash")
+            else:
+                continue
+            if client is None or model is None:
+                continue
+            try:
+                return self._call_with_tools(
+                    client, provider, model, messages,
+                    max_tokens, temperature, tools,
+                    extra_headers=extra_headers or None,
+                )
+            except Exception as exc:
+                logger.debug("[tools_simple] %s/%s falló: %s", provider, model, str(exc)[:80])
+        return {"text": "", "tool_calls": [], "tokens": 0}
+
+    def route_agentic(
+        self,
+        goal: str,
+        tools: list[dict],
+        executor_fn,
+        history: list[dict] | None = None,
+        max_iter: int = 6,
+        progress_cb=None,
+        force_tier: int = 2,
+    ) -> dict:
+        """
+        Loop agéntico Plan → Execute → Verify.
+
+        1. PLAN  — 1 llamada LLM sin tools: genera plan numerado
+        2. EXEC  — loop hasta max_iter: llama con tools, ejecuta tool_calls,
+                   añade resultados al contexto, itera
+        3. SYNTH — si se agotaron iteraciones, pide resumen
+
+        Args:
+            goal:        objetivo del usuario (string)
+            tools:       list[dict] OpenAI function schemas
+            executor_fn: callable(name: str, args: dict) -> str
+            progress_cb: callable(msg: str) — imprime progreso (opcional)
+            force_tier:  tier LLM (2 = modelos 70B, mejor tool following)
+
+        Returns:
+            {"response": str, "plan": str, "iters": int}
+        """
+        def _cb(msg: str) -> None:
+            if progress_cb:
+                progress_cb(msg)
+
+        tool_names = ", ".join(
+            t["function"]["name"] for t in tools if t.get("function")
+        )
+
+        # ── PHASE 1: PLAN ────────────────────────────────────────────────────
+        plan_msgs = [
+            {
+                "role": "system",
+                "content": (
+                    "Eres Nova, asistente IA personal. "
+                    "Antes de ejecutar cualquier acción, creá un plan numerado claro. "
+                    "Muestra el plan completo. Luego lo ejecutarás paso a paso."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Objetivo: {goal}\n\n"
+                    f"Herramientas disponibles: {tool_names}\n\n"
+                    "Creá un plan numerado ANTES de ejecutar. Solo el plan, sin ejecutar todavía."
+                ),
+            },
+        ]
+        try:
+            plan_result = self.route(plan_msgs, force_tier=force_tier, max_tokens=400, temperature=0.3)
+            plan_text = plan_result.get("response", "")
+        except Exception:
+            plan_text = "(no se pudo generar un plan previo)"
+
+        _cb(f"\n📋 Plan:\n{plan_text}\n")
+
+        # ── PHASE 2: EXECUTE ─────────────────────────────────────────────────
+        exec_messages: list[dict] = [
+            {
+                "role": "system",
+                "content": (
+                    "Eres Nova, asistente IA personal. "
+                    "Ejecutá el objetivo usando las herramientas disponibles. "
+                    "Llamá UNA herramienta a la vez. Cuando termines, respondé con un resumen."
+                ),
+            },
+            {"role": "user",    "content": goal},
+            {"role": "assistant", "content": plan_text},
+            {"role": "user",    "content": "Ejecutá el plan ahora, paso a paso."},
+        ]
+
+        actual_tier = self._apply_budget_cap(force_tier)
+        for iteration in range(max_iter):
+            result = self.route_with_tools_simple(
+                exec_messages, tools,
+                force_tier=force_tier, max_tokens=600, temperature=0.3,
+            )
+
+            if result["tool_calls"]:
+                # Añadir el mensaje assistant con tool_calls al contexto
+                exec_messages.append({
+                    "role": "assistant",
+                    "content": result["text"] or None,
+                    "tool_calls": [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["function"]["name"],
+                                "arguments": json.dumps(tc["function"]["arguments"]),
+                            },
+                        }
+                        for tc in result["tool_calls"]
+                    ],
+                })
+                for tc in result["tool_calls"]:
+                    name = tc["function"]["name"]
+                    args = tc["function"]["arguments"]
+                    _cb(f"  ⚙️  {name}({args})")
+                    try:
+                        tool_result = executor_fn(name, args)
+                    except Exception as exc:
+                        tool_result = f"Error: {exc}"
+                    _cb(f"     → {str(tool_result)[:300]}")
+                    exec_messages.append({
+                        "role":         "tool",
+                        "tool_call_id": tc["id"],
+                        "content":      str(tool_result),
+                    })
+            else:
+                # LLM no pidió más tools → respuesta final
+                final = result["text"] or "(sin respuesta)"
+                return {"response": final, "plan": plan_text, "iters": iteration + 1}
+
+        # ── PHASE 3: SYNTH ───────────────────────────────────────────────────
+        _cb("\n🔄 Sintetizando resultados...")
+        exec_messages.append({"role": "user", "content": "Resumí en 2-3 oraciones qué hiciste y el resultado."})
+        try:
+            synth = self.route(exec_messages, force_tier=force_tier, max_tokens=300)
+            final = synth.get("response", "Tarea completada.")
+        except Exception:
+            final = "Tarea completada."
+        return {"response": final, "plan": plan_text, "iters": max_iter}
+
     def get_session_summary(self) -> dict:
         return self.tracker.summary()
 

@@ -743,7 +743,7 @@ def _write_project_files(files: list[tuple[str, str]], base_dir: Path) -> list[s
     Retorna lista de rutas creadas/modificadas.
     """
     import sys
-    confirm_mode = os.getenv("NOVA_DIFF_CONFIRM", "0") == "1" and sys.stdin.isatty()
+    confirm_mode = os.getenv("NOVA_DIFF_CONFIRM", "1") == "1" and sys.stdin.isatty()
     created = []
     dir_name = base_dir.name
 

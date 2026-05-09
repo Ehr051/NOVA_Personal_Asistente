@@ -4724,14 +4724,80 @@ _TOOL_CATALOG: dict[str, tuple] = {
 }
 
 
+def execute_tool(name: str, kwargs: dict) -> str:
+    """Ejecuta una tool del catálogo por nombre con argumentos dict."""
+    if name not in _TOOL_CATALOG:
+        return f"Herramienta '{name}' no encontrada."
+    entry    = _TOOL_CATALOG[name]
+    handler  = entry[1]
+    arg_type = entry[2] if len(entry) > 2 else None
+    try:
+        if arg_type is None:
+            result = handler()
+        elif arg_type == "text":
+            result = handler(kwargs.get("texto", kwargs.get("text", "")))
+        elif arg_type == "location":
+            result = handler(kwargs.get("location", kwargs.get("texto", "")))
+        else:
+            result = handler(**kwargs)
+        return str(result) if result is not None else "Acción completada."
+    except Exception as e:
+        return f"Error en '{name}': {e}"
+
+
+def skill_agente(texto: str) -> str:
+    """Modo agente autónomo: planifica y ejecuta con tools nativas."""
+    if _router is None:
+        return "Router no disponible para modo agente."
+    try:
+        from nova.tools.nova_tools_schemas import get_tool_schemas
+        schemas = get_tool_schemas()
+
+        def _progress(msg: str) -> None:
+            print(msg, flush=True)
+
+        result = _router.route_agentic(
+            goal=texto,
+            tools=schemas,
+            executor_fn=execute_tool,
+            progress_cb=_progress,
+            force_tier=2,
+        )
+        return result.get("response", "Agente completó la tarea.")
+    except Exception as e:
+        return f"Error en modo agente: {e}"
+
+
+# Agregar intents del agente autónomo aquí (después de que skill_agente esté definida)
+_INTENTS += [
+    (r"(?:modo\s+agente|act[uú]a\s+como\s+agente|agente\s*:)\s*(.+)",     skill_agente, 1),
+    (r"(?:de\s+forma\s+aut[oó]noma|aut[oó]nomamente|sin\s+ayuda)\s+(.+)", skill_agente, 1),
+]
+
+
 def llm_dispatch(user_input: str) -> str | None:
     """
     Segundo intento de dispatch: pregunta al LLM qué tool usar.
     Solo se activa cuando dispatch() (regex) no encontró match.
-    Latencia: ~400ms (force_tier=1, max_tokens=25).
+    Intenta primero con tool calling nativo; fallback a text-matching.
     """
     if not _router:
         return None
+
+    # ── Intentar tool calling nativo (más confiable que text-matching) ──────
+    try:
+        from nova.tools.nova_tools_schemas import get_tool_schemas
+        schemas = get_tool_schemas()
+        msgs = [
+            {"role": "system", "content": "Sos un dispatcher. Usá las tools disponibles para responder al usuario."},
+            {"role": "user",   "content": user_input},
+        ]
+        result = _router.route_with_tools_simple(msgs, schemas, force_tier=1, max_tokens=50, temperature=0.0)
+        if result.get("tool_calls"):
+            tc = result["tool_calls"][0]
+            return execute_tool(tc["function"]["name"], tc["function"]["arguments"])
+    except Exception:
+        pass
 
     catalog_lines = "\n".join(
         f"- {k}: {desc}" for k, (desc, _, _) in _TOOL_CATALOG.items()
