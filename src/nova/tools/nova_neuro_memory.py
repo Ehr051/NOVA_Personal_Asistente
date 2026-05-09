@@ -144,14 +144,14 @@ class NovaNeuroMemory:
         load_dotenv()
 
         # Inicializar memoria JSON de respaldo (siempre, independiente de Ollama)
-        _simple_path = os.path.expanduser("__DOTNOVA_PATH__/memory_simple.json")
+        _simple_path = os.path.expanduser("~/.nova/memory_simple.json")
         self._simple = _SimpleJSONMemory(_simple_path)
 
         # Asegurar directorios
-        os.makedirs(os.path.expanduser("__DOTNOVA_PATH__"), exist_ok=True)
+        os.makedirs(os.path.expanduser("~/.nova"), exist_ok=True)
 
         # Lock para evitar dos procesos Nova compitiendo por la misma base Qdrant
-        self._lock_path = os.path.expanduser("__DOTNOVA_PATH__/qdrant.lock")
+        self._lock_path = os.path.expanduser("~/.nova/qdrant.lock")
         try:
             import filelock
             # Limpiar lock huérfano (proceso anterior murió sin liberarlo)
@@ -200,7 +200,7 @@ class NovaNeuroMemory:
                 "provider": "qdrant",
                 "config": {
                     "collection_name": "nova_memories",
-                    "path": os.path.expanduser("__DOTNOVA_PATH__/qdrant_db"),
+                    "path": os.path.expanduser("~/.nova/qdrant_db"),
                     "embedding_model_dims": 2560
                 }
             },

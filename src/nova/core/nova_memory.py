@@ -4,7 +4,7 @@ nova_memory.py
 Memoria persistente de NOVA.
 
 Almacenamiento dual:
-  • SQLite  → __DOTNOVA_PATH__/memory.db  (búsqueda rápida)
+  • SQLite  → ~/.nova/memory.db  (búsqueda rápida)
   • Obsidian vault → ~/Cerebro/NOVA/Memoria/ (cerebro compartido)
 
 Tablas SQLite:
@@ -20,7 +20,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
-DB_PATH = os.path.expanduser("__DOTNOVA_PATH__/memory.db")
+DB_PATH = os.path.expanduser("~/.nova/memory.db")
 
 # ─── Obsidian REST API ────────────────────────────────────────────────────────
 _OBS_BASE = os.getenv("OBSIDIAN_BASE_URL", "http://127.0.0.1:27123")

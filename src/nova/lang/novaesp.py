@@ -64,6 +64,16 @@ except ImportError:
 
 # ─── Speaker verification (MFCC, sin cargar Whisper) ─────────────────────────
 
+try:
+    import librosa as _librosa_check  # noqa: F401
+    _HAS_LIBROSA = True
+except ImportError:
+    _HAS_LIBROSA = False
+    log.warning(
+        "[Speaker] librosa no instalado — verificación de hablante desactivada. "
+        "Para activarla: pip install librosa"
+    )
+
 _SPEAKER_PROFILE: "np.ndarray | None" = None
 _SPEAKER_THRESHOLD = float(os.getenv("SPEAKER_THRESHOLD", "0.87"))
 _SPEAKER_VERIFY = False   # se activa si se carga un perfil
@@ -94,6 +104,8 @@ def _is_my_voice(wav_bytes: bytes) -> bool:
     """Verifica si el audio pertenece al usuario enrollado usando MFCC."""
     if not _SPEAKER_VERIFY or _SPEAKER_PROFILE is None:
         return True   # sin perfil → acepta todo
+    if not _HAS_LIBROSA:
+        return True   # sin librosa → no se puede verificar, acepta todo
 
     # Si Nova está hablando o acaba de hablar, rechazar siempre — es eco
     if _nova_speaking or time.time() < _tts_until:
@@ -148,7 +160,7 @@ def _is_speech_not_music(audio: "sr.AudioData") -> bool:
 
 
 # ─── Single instance lock ────────────────────────────────────────────────────
-_PID_FILE = os.path.expanduser("__DOTNOVA_PATH__/nova.pid")
+_PID_FILE = os.path.expanduser("~/.nova/nova.pid")
 
 def _acquire_lock() -> bool:
     os.makedirs(os.path.dirname(_PID_FILE), exist_ok=True)
@@ -1115,7 +1127,11 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             f"Puedo responder sin wake word."
         )
     print(f"\n{'═'*56}")
-    print(f"  {ASSISTANT_NAME.upper()} v2.0 — Agente Total")
+    try:
+        from nova import __version__ as _nova_ver
+    except Exception:
+        _nova_ver = "?"
+    print(f"  {ASSISTANT_NAME.upper()} v{_nova_ver} — Agente Total")
     print(f"  Voz: {NOVA_VOICE}  |  Wake word: '{_WAKE_BASE.capitalize()}'")
     print(f"  Di '{_WAKE_BASE.capitalize()} salir' para terminar.")
     print(f"{'═'*56}\n")
