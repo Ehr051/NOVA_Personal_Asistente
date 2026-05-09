@@ -324,7 +324,7 @@ def _speak_edge(text: str) -> bool:
         _say_proc = play_audio(fpath)
         return True
     except Exception as e:
-        print(f"  [edge-tts] error: {e} → fallback a say")
+        log.warning("[edge-tts] error: %s — fallback a say", e)
         return False
 
 
@@ -840,7 +840,7 @@ def _calibrate_recognizer(recognizer: sr.Recognizer, mic: sr.Microphone) -> None
     (TV, ventiladores, etc.). Escucha 3 segundos y ajusta automáticamente.
     Luego multiplica por un factor para exigir voces más cercanas.
     """
-    print("  [calibrando ruido ambiente... 3 segundos]")
+    log.info("[voz] Calibrando ruido ambiente... 3 segundos")
     with mic as source:
         recognizer.adjust_for_ambient_noise(source, duration=3)
 
@@ -854,7 +854,8 @@ def _calibrate_recognizer(recognizer: sr.Recognizer, mic: sr.Microphone) -> None
     # 1.8s de silencio final antes de cerrar la frase
     recognizer.non_speaking_duration = float(os.getenv("NON_SPEAKING_DURATION", "1.8"))
 
-    print(f"  [umbral inicial: {recognizer.energy_threshold:.0f} (TV x{factor}) — pausa={recognizer.pause_threshold}s]")
+    log.info("[voz] Umbral inicial: %.0f (TV x%s) — pausa=%.1fs",
+             recognizer.energy_threshold, factor, recognizer.pause_threshold)
 
 
 def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
@@ -895,7 +896,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
     skills.set_router(router)
     # notify_callback es SOLO para notificaciones de tareas en background (timers, agentes async).
     def _bg_notify(text: str) -> None:
-        print(f"  [BG NOTIFY] {text}")
+        log.debug("[BG NOTIFY] %s", text)
         speak(text, hud)
     skills.set_notify_callback(_bg_notify)
 
