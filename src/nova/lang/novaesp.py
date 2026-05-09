@@ -765,7 +765,10 @@ def listen(
         wav_bytes = audio.get_wav_data()
         with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
             if _ALL_SPEAKER_PROFILES:
-                identified = _pool.submit(_identify_speaker, wav_bytes).result(timeout=3)
+                try:
+                    identified = _pool.submit(_identify_speaker, wav_bytes).result(timeout=3)
+                except Exception:
+                    identified = None
                 if identified is None:
                     hud.put_state(status="IDLE")
                     return None
@@ -777,7 +780,10 @@ def listen(
                 except Exception:
                     pass
             else:
-                ok = _pool.submit(_is_my_voice, wav_bytes).result(timeout=3)
+                try:
+                    ok = _pool.submit(_is_my_voice, wav_bytes).result(timeout=3)
+                except Exception:
+                    ok = False
                 if not ok:
                     hud.put_state(status="IDLE")
                     return None
