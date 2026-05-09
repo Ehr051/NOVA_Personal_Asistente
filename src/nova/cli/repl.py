@@ -654,6 +654,136 @@ def cmd_modelo(arg: str) -> Optional[str]:
     return "No se pudo cambiar el orden de proveedores en este router."
 
 
+_MODO_ACTUAL: str = "normal"
+
+_MODOS: dict[str, dict] = {
+    "normal": {
+        "desc":  "Modo estándar — balanceado",
+        "temp":  0.7,
+        "tier":  None,
+        "extra": "",
+    },
+    "codigo": {
+        "desc":  "Modo código — preciso, bajo temperatura, modelos fuertes",
+        "temp":  0.1,
+        "tier":  2,
+        "extra": "Sos un experto en programación. Priorizá código correcto, eficiente y seguro. Sin relleno.",
+    },
+    "creativo": {
+        "desc":  "Modo creativo — alta temperatura, respuestas imaginativas",
+        "temp":  1.1,
+        "tier":  None,
+        "extra": "Sos un asistente creativo. Explorá ideas originales, metáforas y perspectivas inesperadas.",
+    },
+    "rapido": {
+        "desc":  "Modo rápido — modelos pequeños, mínima latencia",
+        "temp":  0.5,
+        "tier":  0,
+        "extra": "Respuestas muy concisas — una oración o menos si es posible.",
+    },
+    "militar": {
+        "desc":  "Modo militar — terminología táctica, respuestas estructuradas",
+        "temp":  0.3,
+        "tier":  2,
+        "extra": "Sos un asesor de operaciones militares. Usá terminología táctica estándar, estructuras claras y brevedad. Sin eufemismos.",
+    },
+}
+
+
+def cmd_modo(arg: str) -> Optional[str]:
+    """Cambia el modo de operación: /modo [normal|codigo|creativo|rapido|militar]"""
+    global _MODO_ACTUAL
+    modo = arg.strip().lower()
+    if not modo or modo in ("lista", "list", "?"):
+        lines = [f"Modo actual: {_MODO_ACTUAL}\n\nModos disponibles:"]
+        for k, v in _MODOS.items():
+            mark = " ◀" if k == _MODO_ACTUAL else ""
+            lines.append(f"  {k:<12} — {v['desc']}{mark}")
+        return "\n".join(lines)
+    if modo not in _MODOS:
+        return f"Modo '{modo}' desconocido. Opciones: {', '.join(_MODOS)}"
+    _MODO_ACTUAL = modo
+    cfg = _MODOS[modo]
+    # Aplicar temperatura si el router está disponible
+    if _router and _router is not False and cfg["temp"] is not None:
+        _router._default_temperature = cfg["temp"]
+    return f"Modo cambiado a '{modo}' — {cfg['desc']}"
+
+
+def cmd_rutina(arg: str) -> Optional[str]:
+    """
+    Macros de comandos guardados.
+    /rutina definir <nombre> <cmd1> ; <cmd2> ; ...   — crear/actualizar rutina
+    /rutina <nombre>                                  — ejecutar rutina
+    /rutina lista                                     — listar rutinas
+    /rutina borrar <nombre>                           — eliminar rutina
+    """
+    import json as _j
+    from pathlib import Path
+
+    _rutinas_file = Path(os.path.expanduser("~/.nova/rutinas.json"))
+
+    def _load() -> dict:
+        try:
+            return _j.loads(_rutinas_file.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _save(data: dict) -> None:
+        _rutinas_file.parent.mkdir(parents=True, exist_ok=True)
+        _rutinas_file.write_text(_j.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    parts  = arg.strip().split(maxsplit=1)
+    sub    = parts[0].lower() if parts else ""
+    rest   = parts[1] if len(parts) > 1 else ""
+
+    if sub in ("lista", "list", "ls", ""):
+        rutinas = _load()
+        if not rutinas:
+            return "No hay rutinas definidas. Definí una con: /rutina definir <nombre> <cmd1> ; <cmd2>"
+        lines = ["Rutinas:\n"]
+        for name, cmds in sorted(rutinas.items()):
+            lines.append(f"  {name}: {' ; '.join(cmds)}")
+        return "\n".join(lines)
+
+    if sub in ("definir", "define", "set", "crear"):
+        # /rutina definir mañana /estado ; /skills ; /cerebro MAIRA
+        subparts = rest.split(maxsplit=1)
+        if len(subparts) < 2:
+            return "Uso: /rutina definir <nombre> <cmd1> ; <cmd2> ; ..."
+        rname = subparts[0].lower()
+        cmds  = [c.strip() for c in subparts[1].split(";") if c.strip()]
+        if not cmds:
+            return "No se encontraron comandos. Separalos con ';'."
+        rutinas = _load()
+        rutinas[rname] = cmds
+        _save(rutinas)
+        return f"Rutina '{rname}' guardada ({len(cmds)} paso(s)): {' → '.join(cmds)}"
+
+    if sub in ("borrar", "delete", "rm", "eliminar"):
+        rname = rest.strip().lower()
+        rutinas = _load()
+        if rname not in rutinas:
+            return f"Rutina '{rname}' no encontrada."
+        del rutinas[rname]
+        _save(rutinas)
+        return f"Rutina '{rname}' eliminada."
+
+    # Ejecutar rutina por nombre
+    rname   = sub
+    rutinas = _load()
+    if rname not in rutinas:
+        return (f"Rutina '{rname}' no encontrada. "
+                f"Rutinas disponibles: {', '.join(sorted(rutinas)) or 'ninguna'}")
+    cmds = rutinas[rname]
+    results: list[str] = []
+    for cmd in cmds:
+        out = _dispatch_slash(cmd) if cmd.startswith("/") else _route_to_llm(cmd)
+        if out:
+            results.append(f"[{cmd}]\n{out}")
+    return "\n\n".join(results) if results else f"Rutina '{rname}' ejecutada ({len(cmds)} pasos)."
+
+
 def cmd_exportar(arg: str) -> Optional[str]:
     """Exporta la sesión actual a un archivo Markdown o JSON."""
     history = _session_state.get("history", [])
@@ -761,8 +891,12 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/webui":     (cmd_webui,       "Interfaz web: /webui [start|stop|status]"),
     "/exportar":  (cmd_exportar,    "Exportar sesión: /exportar [archivo.md|archivo.json]"),
     "/historial": (cmd_historial,   "Ver historial de la sesión: /historial [N turnos]"),
+    "/rutina":    (cmd_rutina,      "Macros: /rutina definir <nombre> <cmd> ; <cmd>  ·  /rutina <nombre>"),
+    "/modo":      (cmd_modo,        "Modo de operación: /modo [normal|codigo|creativo|rapido|militar]"),
+    "/mode":      (cmd_modo,        "→ /modo"),
     "/export":    (cmd_exportar,    "→ /exportar"),
     "/history":   (cmd_historial,   "→ /historial"),
+    "/routine":   (cmd_rutina,      "→ /rutina"),
     # ── Aliases inglés (para compatibilidad) ──────────────────────────────────
     "/help":      (cmd_help,        "→ /ayuda"),
     "/exit":      (cmd_exit,        "→ /salir"),
@@ -917,8 +1051,11 @@ def _route_to_llm(text: str) -> str:
     except Exception:
         pass
 
-    # System prompt con contexto del entorno (CWD, repo, rama)
+    # System prompt con contexto del entorno (CWD, repo, rama) + modo activo
     sys_parts = [_system_context_block()]
+    modo_extra = _MODOS.get(_MODO_ACTUAL, {}).get("extra", "")
+    if modo_extra:
+        sys_parts.insert(0, modo_extra)
     if extra_ctx:
         sys_parts.append(extra_ctx)
     if cerebro_ctx:
@@ -931,8 +1068,11 @@ def _route_to_llm(text: str) -> str:
         # Streaming: imprime tokens a medida que llegan
         response_chunks: list[str] = []
         t0 = datetime.datetime.now()
+        _modo_cfg   = _MODOS.get(_MODO_ACTUAL, {})
+        _force_tier = _modo_cfg.get("tier")
+        _stream_kw  = {"force_tier": _force_tier} if _force_tier is not None else {}
         print()
-        for chunk in _router.route_stream(messages):
+        for chunk in _router.route_stream(messages, **_stream_kw):
             print(chunk, end="", flush=True)
             response_chunks.append(chunk)
         print()

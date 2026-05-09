@@ -28,18 +28,24 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Ejemplos de uso:
+  nova "qué hora es"                 # One-shot: respuesta directa y sale
+  nova ask "explicá este error"      # Equivalente explícito
+  git diff | nova ask                # Stdin pipe: lee de stdin
   nova chat                          # Sesión REPL interactiva (slash commands + LLM)
   nova skill list                    # Listar skills disponibles
-  nova skill install github          # Instalar skill de GitHub
-  nova skill optimize               # Optimizar skills basado en uso
-  nova agent morning                # Ejecutar agente de briefing matutino
-  nova agent research "IA en 2026"  # Ejecutar agente de investigación
+  nova agent morning                 # Ejecutar agente de briefing matutino
+  nova agent research "IA en 2026"   # Ejecutar agente de investigación
   nova agent code "crea función fibonacci"  # Ejecutar agente de código
         """
     )
     
     subparsers = parser.add_subparsers(dest='command', help='Comandos disponibles')
-    
+
+    # ========== ONE-SHOT / STDIN ==========
+    ask_parser = subparsers.add_parser('ask', help='Pregunta one-shot: nova ask "pregunta" o cat file | nova ask')
+    ask_parser.add_argument('question', nargs='*', default=None,
+                            help='Pregunta (si se omite, lee de stdin)')
+
     # ========== CHAT REPL ==========
     subparsers.add_parser('chat', help='Sesión REPL interactiva en terminal (estilo claude/opencode)')
 
@@ -141,6 +147,14 @@ Ejemplos de uso:
     daemon_subparsers.add_parser('status', help='Estado del daemon')
     daemon_subparsers.add_parser('restart',help='Reiniciar el daemon')
 
+    # `nova "pregunta"` — si el primer arg no es un subcomando conocido,
+    # tratar todo como one-shot (ej: nova "qué hora es", nova explain foo.py)
+    _KNOWN_CMDS = {"ask", "chat", "skill", "agent", "config", "system", "daemon",
+                   "-h", "--help"}
+    _raw = sys.argv[1:]
+    if _raw and _raw[0] not in _KNOWN_CMDS and not _raw[0].startswith("-"):
+        return cmd_ask_oneshot(" ".join(_raw))
+
     args = parser.parse_args()
 
     # Sin argumentos → chat directamente (comportamiento por defecto)
@@ -148,7 +162,11 @@ Ejemplos de uso:
         args.command = 'chat'
 
     # Enrutar comandos
-    if args.command == 'chat':
+    if args.command == 'ask':
+        question_parts = getattr(args, 'question', None) or []
+        text = " ".join(question_parts).strip() if question_parts else ""
+        return cmd_ask_oneshot(text or None)
+    elif args.command == 'chat':
         from nova.cli.repl import run as repl_run
         return repl_run()
     elif args.command == 'skill':
@@ -226,6 +244,86 @@ def handle_system_commands(args):
         return 1
 
 # ========== IMPLEMENTACIÓN DE COMANDOS ==========
+
+def _silence_qdrant_del() -> None:
+    try:
+        from qdrant_client import QdrantClient
+        QdrantClient.__del__ = lambda self: None
+    except Exception:
+        pass
+
+
+def cmd_ask_oneshot(text: str | None) -> int:
+    """
+    Responde una pregunta y sale — sin REPL interactivo.
+
+    Fuentes de input (en orden):
+      1. `text` recibido como argumento
+      2. stdin (pipe): `git diff | nova ask`
+    """
+    import sys as _sys
+
+    # Leer stdin si está siendo piped
+    stdin_data = ""
+    if not _sys.stdin.isatty():
+        stdin_data = _sys.stdin.read().strip()
+
+    # Combinar pregunta + stdin
+    if stdin_data and text:
+        query = f"{text}\n\n{stdin_data}"
+    elif stdin_data:
+        query = stdin_data
+    elif text:
+        query = text
+    else:
+        print("Uso: nova \"pregunta\"  o  cat archivo | nova ask")
+        return 1
+
+    _silence_qdrant_del()
+
+    try:
+        from dotenv import load_dotenv as _ldenv
+        _ldenv()
+    except Exception:
+        pass
+
+    # 1. Intentar skills locales primero (sin latencia de red)
+    try:
+        from nova.tools.nova_skills import dispatch as _dispatch
+        result = _dispatch(query)
+        if result:
+            print(result)
+            return 0
+    except Exception:
+        pass
+
+    # 2. LLM (skills → daemon → router directo)
+    try:
+        from nova.core.nova_client import NovaDaemonClient
+        client = NovaDaemonClient(auto_start=False)
+        if client.ping():
+            for chunk in client.chat_stream(query, session="oneshot"):
+                print(chunk, end="", flush=True)
+            print()
+            return 0
+    except Exception:
+        pass
+
+    # 3. Router directo
+    try:
+        from nova.core.nova_router import NovaRouter
+        router = NovaRouter()
+        for chunk in router.route_stream([
+            {"role": "system", "content": "Sos Nova, asistente personal. Respuestas directas y concisas."},
+            {"role": "user", "content": query},
+        ]):
+            print(chunk, end="", flush=True)
+        print()
+        return 0
+    except Exception as e:
+        print(f"Error: {e}", file=_sys.stderr)
+        return 1
+
 
 def cmd_skill_list():
     """Listar skills disponibles"""
