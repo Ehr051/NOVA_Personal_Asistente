@@ -17,19 +17,29 @@ logging.basicConfig(level=_log_level, format="%(levelname)s %(name)s: %(message)
 
 # Bloquear numba con filtro en el handler raíz — más robusto que setLevel porque
 # numba reconfigura sus propios loggers durante el JIT (que ocurre en un hilo worker).
-class _NoNumbaFilter(logging.Filter):
+_NOISY_PREFIXES = (
+    "numba",
+    "rustls", "h2.", "h2codec", "hyper_util", "hyper",
+    "reqwest", "cookie_store", "primp", "duckduckgo_search",
+    "ddgs", "httpcore._", "hpack",
+)
+
+class _ThirdPartyFilter(logging.Filter):
     def filter(self, record):
-        return not record.name.startswith("numba")
+        if record.levelno >= logging.WARNING:
+            return True
+        return not any(record.name.startswith(p) for p in _NOISY_PREFIXES)
 
 for _h in logging.root.handlers:
-    _h.addFilter(_NoNumbaFilter())
+    _h.addFilter(_ThirdPartyFilter())
 
-# Además deshabilitar propagación en el logger raíz de numba
-_numba_log = logging.getLogger("numba")
-_numba_log.setLevel(logging.WARNING)
-_numba_log.propagate = False
-if not _numba_log.handlers:
-    _numba_log.addHandler(logging.NullHandler())
+# Además deshabilitar propagación en loggers raíz ruidosos
+for _nl in ("numba", "rustls", "h2", "hyper_util", "reqwest", "cookie_store", "primp"):
+    _ll = logging.getLogger(_nl)
+    _ll.setLevel(logging.WARNING)
+    _ll.propagate = False
+    if not _ll.handlers:
+        _ll.addHandler(logging.NullHandler())
 
 # Silenciar otras libs ruidosas siempre (excepto WARNING+)
 for _noisy in ("httpx", "httpcore", "openai", "groq", "anthropic",

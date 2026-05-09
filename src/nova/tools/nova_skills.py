@@ -4156,10 +4156,13 @@ _INTENTS: list[tuple] = [
     # "describí lo que ves" / "qué ves" / "describí" sin argumento → pantalla
     (r"^(?:describí?(?:me)?|describe(?:me)?)\s+lo\s+que\s+ves\b.*",           skill_ver_pantalla, 0),
     (r"^(?:qué ves|que ves|qué estás viendo|que estas viendo)\??$",            skill_ver_pantalla, 0),
-    (r"(?:qué ves|que ves|analiz[aá]|describí?|qué hay en|qué estoy viendo)\s+"
+    (r"(?:qué ves|que ves|analiz[aá]|describí?|qu[eé]\s+hay\s+en|qué estoy viendo)\s+"
      r"(?:la\s+)?(?:pantalla|screen)(?:\s+.*)?",                               skill_ver_pantalla, 0),
-    (r"(?:mirá|mira|qué ves|que ves|analiz[aá]|describí?)\s+"
-     r"(?:en\s+(?:mi\s+|tu\s+)?|con\s+la\s+|por\s+la\s+)?(?:cámara|camara|webcam)(?:\s+.*)?",
+    (r"qu[eé]\s+hay\s+en\s+(?:la\s+)?pantalla",                               skill_ver_pantalla, 0),
+    (r"(?:mirá?|mira|qué ves|que ves|analiz[aá]|describí?|qu[eé]\s+ves?)\s+"
+     r"(?:en\s+(?:la\s+|mi\s+|tu\s+)?|con\s+la\s+|por\s+la\s+|la\s+)?(?:cámara|camara|webcam)(?:\s+.*)?",
+                                                                               skill_ver_camara,   0),
+    (r"(?:abrí?|activ[aá]|encendé?|mostrá?)\s+(?:la\s+)?(?:cámara|camara|webcam)",
                                                                                skill_ver_camara,   0),
     (r"(?:identific[aá][r]?|reconoc[eé][r]?|qué objeto|qué es esto)\s*"
      r"(?:con la cámara|frente a la cámara|esto)?",                            skill_identificar_objeto, None),

@@ -56,6 +56,20 @@ def _extract_features(wav_path: str) -> np.ndarray | None:
         return None
 
 
+def _extract_features_from_bytes(wav_bytes: bytes) -> np.ndarray | None:
+    import io
+    try:
+        y, _ = librosa.load(io.BytesIO(wav_bytes), sr=SAMPLE_RATE, mono=True)
+        if len(y) < SAMPLE_RATE * 0.3:
+            return None
+        mfccs = librosa.feature.mfcc(y=y, sr=SAMPLE_RATE, n_mfcc=N_MFCC)
+        feats = np.concatenate([mfccs.mean(axis=1), mfccs.std(axis=1)])
+        norm  = np.linalg.norm(feats)
+        return feats / norm if norm > 0 else feats
+    except Exception:
+        return None
+
+
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b))   # ya normalizados en _extract_features
 
@@ -153,10 +167,32 @@ class NovaVoiceSTT:
         ]
 
         print("\n" + "═" * 56)
-        print("  🎙️  REGISTRO DE VOZ — Nova Speaker Enrollment")
+        print("  REGISTRO DE VOZ — Nova Speaker Enrollment")
         print("  Se harán 3 rondas cortas con frases guiadas.")
         print("  Esto toma ~2 minutos y da un perfil mucho más preciso.")
         print("═" * 56)
+
+        # ── Verificar nivel de ruido ambiente ANTES de grabar ──────────────────
+        print("\n  Verificando ruido de fondo... (3 segundos de silencio)")
+        print("  NO hables durante esta fase.\n")
+        try:
+            with sr.Microphone(sample_rate=SAMPLE_RATE) as _src:
+                _bg_audio = self.recognizer.record(_src, duration=3)
+            _bg_feats = _extract_features_from_bytes(_bg_audio.get_wav_data())
+            if _bg_feats is not None:
+                _bg_energy = float(np.linalg.norm(_bg_feats))
+                if _bg_energy > 0.3:
+                    print(f"  ADVERTENCIA: Nivel de ruido alto ({_bg_energy:.2f}).")
+                    print("  La tele, radio u otro audio afecta la calidad del perfil.")
+                    print("  Recomendado: apagá todo audio ambiente antes de continuar.\n")
+                    resp = input("  ¿Continuar igual? [s/N]: ").strip().lower()
+                    if resp not in ("s", "si", "sí", "y", "yes"):
+                        print("  Enrollment cancelado. Volvé cuando haya silencio.")
+                        return
+                else:
+                    print(f"  Nivel de ruido: OK ({_bg_energy:.2f})\n")
+        except Exception:
+            pass  # Si falla el check, continuar igual
 
         feature_vectors = []
         tmp_paths = []
