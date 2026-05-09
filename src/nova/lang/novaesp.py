@@ -363,6 +363,57 @@ def _clean_for_speech(text: str) -> str:
     return text.strip()
 
 
+# ── Agentic loop async (voz → agente autónomo) ───────────────────────────────
+
+_AGENTE_RE = [
+    re.compile(r"(?:modo\s+agente|act[uú]a\s+como\s+agente|agente\s*:)\s*(.+)", re.I | re.S),
+    re.compile(r"(?:de\s+forma\s+aut[oó]noma|aut[oó]nomamente|sin\s+ayuda)\s+(.+)", re.I | re.S),
+]
+
+
+def _agente_goal(text: str):
+    """Retorna el objetivo si el texto activa el modo agente, None si no."""
+    for pat in _AGENTE_RE:
+        m = pat.search(text)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _launch_agente_async(goal: str, hud: "NovaHUD", history: list,
+                         nova_memory, speak_fn) -> None:
+    """
+    Lanza route_agentic() en un hilo daemon separado para no bloquear el HUD.
+    El progress_cb envía cada línea al log del HUD en tiempo real.
+    Al terminar habla el resultado final por TTS.
+    """
+    history.append({"role": "user", "content": f"agente: {goal}"})
+    hud.put_state(status="THINKING", user_text=f"agente: {goal}")
+
+    def _run() -> None:
+        def _cb(msg: str) -> None:
+            m = msg.strip()
+            if m:
+                hud.put_state(response_text=m)
+
+        try:
+            from nova.tools.nova_skills import skill_agente
+            final = skill_agente(goal, progress_cb=_cb)
+        except Exception as exc:
+            final = f"Error en modo agente: {exc}"
+
+        history.append({"role": "assistant", "content": final})
+        try:
+            nova_memory.save_turn("user",      f"agente: {goal}")
+            nova_memory.save_turn("assistant", final)
+        except Exception:
+            pass
+        hud.put_state(status="SPEAKING", response_text=final, model_info="[AGENTE]")
+        speak_fn(final)
+
+    threading.Thread(target=_run, daemon=True, name="nova-agente").start()
+
+
 def speak(text: str, hud: NovaHUD, lang: str = "es") -> None:
     """
     Reproduce texto con barge-in.
@@ -978,6 +1029,13 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
         log.debug("Tú [texto]: %s", text[:80])
         hud.put_state(status="THINKING")   # user_text ya fue logueado por _on_text_submit
 
+        # Modo agente autónomo — interceptar ANTES del dispatch para no bloquear el HUD
+        _goal = _agente_goal(text)
+        if _goal:
+            _launch_agente_async(_goal, hud, history, nova_memory,
+                                 speak_fn=lambda t: speak(t, hud, lang=_SESSION_LANG))
+            return
+
         # Skills siempre locales (independiente del daemon)
         skill_resp = skills.dispatch(text)
         if skill_resp:
@@ -1195,6 +1253,13 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             print(f"  [HUD TEMA] {theme_resp}")
             speak(theme_resp, hud)
             hud.put_state(status="IDLE")
+            continue
+
+        # Modo agente autónomo — interceptar antes del dispatch
+        _goal = _agente_goal(user_input)
+        if _goal:
+            _launch_agente_async(_goal, hud, history, nova_memory,
+                                 speak_fn=lambda t: speak(t, hud, lang=_SESSION_LANG))
             continue
 
         # ── Skill local primero ───────────────────────────────

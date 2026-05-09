@@ -4745,22 +4745,26 @@ def execute_tool(name: str, kwargs: dict) -> str:
         return f"Error en '{name}': {e}"
 
 
-def skill_agente(texto: str) -> str:
-    """Modo agente autónomo: planifica y ejecuta con tools nativas."""
+def skill_agente(texto: str, progress_cb=None) -> str:
+    """Modo agente autónomo: planifica y ejecuta con tools nativas.
+
+    progress_cb: callable(str) opcional — recibe cada línea de progreso en tiempo real.
+    """
     if _router is None:
         return "Router no disponible para modo agente."
     try:
         from nova.tools.nova_tools_schemas import get_tool_schemas
         schemas = get_tool_schemas()
 
-        def _progress(msg: str) -> None:
+        def _default_cb(msg: str) -> None:
             print(msg, flush=True)
 
+        _cb = progress_cb or _default_cb
         result = _router.route_agentic(
             goal=texto,
             tools=schemas,
             executor_fn=execute_tool,
-            progress_cb=_progress,
+            progress_cb=_cb,
             force_tier=2,
         )
         return result.get("response", "Agente completó la tarea.")
