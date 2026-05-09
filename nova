@@ -287,15 +287,32 @@ def cmd_ask_oneshot(text: str | None) -> int:
     except Exception:
         pass
 
-    # 1. Intentar skills locales primero (sin latencia de red)
+    # Expandir @archivo en la query
+    _at_blocks: list[str] = []
     try:
-        from nova.tools.nova_skills import dispatch as _dispatch
-        result = _dispatch(query)
-        if result:
-            print(result)
-            return 0
+        from nova.cli.repl import _expand_at_files
+        query, _at_blocks = _expand_at_files(query)
+        if _at_blocks:
+            import sys as _s2
+            print(f"  [Leyendo {len(_at_blocks)} archivo(s)]", file=_s2.stderr)
     except Exception:
         pass
+
+    # 1. Intentar skills locales primero (sin latencia de red, solo si no hay @archivos)
+    if not _at_blocks:
+        try:
+            from nova.tools.nova_skills import dispatch as _dispatch
+            result = _dispatch(query)
+            if result:
+                print(result)
+                return 0
+        except Exception:
+            pass
+
+    # Preparar system message con archivos si los hay
+    _sys_msg = "Sos Nova, asistente personal. Respuestas directas y concisas."
+    if _at_blocks:
+        _sys_msg += "\n\n[Archivos de contexto]\n\n" + "\n\n".join(_at_blocks)
 
     # 2. LLM (skills → daemon → router directo)
     try:
@@ -314,7 +331,7 @@ def cmd_ask_oneshot(text: str | None) -> int:
         from nova.core.nova_router import NovaRouter
         router = NovaRouter()
         for chunk in router.route_stream([
-            {"role": "system", "content": "Sos Nova, asistente personal. Respuestas directas y concisas."},
+            {"role": "system", "content": _sys_msg},
             {"role": "user", "content": query},
         ]):
             print(chunk, end="", flush=True)

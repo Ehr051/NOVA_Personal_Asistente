@@ -784,6 +784,99 @@ def cmd_rutina(arg: str) -> Optional[str]:
     return "\n\n".join(results) if results else f"Rutina '{rname}' ejecutada ({len(cmds)} pasos)."
 
 
+def cmd_comparar(arg: str) -> Optional[str]:
+    """Envía la misma pregunta a múltiples proveedores y compara respuestas."""
+    _lazy_init()
+    if not _router or _router is False:
+        return "Router no disponible."
+    if not arg.strip():
+        return "Uso: /comparar <pregunta>"
+
+    import concurrent.futures
+    import datetime as _dt
+
+    providers = getattr(_router, "provider_order", [])[:4]  # máx 4
+    if not providers:
+        return "No hay proveedores disponibles."
+
+    messages = [
+        {"role": "system", "content": "Respondé de forma concisa y directa."},
+        {"role": "user", "content": arg.strip()},
+    ]
+
+    def _query(provider: str) -> tuple[str, str, float]:
+        t0 = _dt.datetime.now()
+        try:
+            # Usar un router temporal con provider_order restringido
+            import copy as _copy
+            r2 = _copy.copy(_router)
+            r2.provider_order = [provider]
+            chunks: list[str] = []
+            for chunk in r2.route_stream(messages, max_tokens=300, temperature=0.7):
+                chunks.append(chunk)
+            elapsed = (_dt.datetime.now() - t0).total_seconds()
+            return provider, "".join(chunks).strip(), elapsed
+        except Exception as exc:
+            return provider, f"[Error: {exc}]", 0.0
+
+    print(f"\nComparando {len(providers)} proveedor(es)...\n")
+    results: list[tuple[str, str, float]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(providers)) as ex:
+        futures = {ex.submit(_query, p): p for p in providers}
+        for fut in concurrent.futures.as_completed(futures):
+            results.append(fut.result())
+
+    results.sort(key=lambda x: x[2])  # ordenar por velocidad
+    lines: list[str] = []
+    for provider, resp, elapsed in results:
+        lines.append(f"── {provider} ({elapsed:.1f}s) ──")
+        lines.append(resp)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_nota(arg: str) -> Optional[str]:
+    """Captura rápida al vault Cerebro. /nota <texto> o /nota @titulo texto"""
+    from pathlib import Path
+    import datetime as _dt
+
+    text = arg.strip()
+    if not text:
+        return "Uso: /nota <texto>  o  /nota @titulo texto"
+
+    # Parsear título opcional (@titulo al inicio)
+    titulo = None
+    if text.startswith("@"):
+        parts = text.split(maxsplit=1)
+        titulo = parts[0][1:] or None
+        text   = parts[1] if len(parts) > 1 else text
+
+    ts = _dt.datetime.now()
+    if titulo is None:
+        titulo = ts.strftime("nota_%Y%m%d_%H%M%S")
+
+    # Destinos: Drops/ primero, luego Notas/
+    drops_dir = Path.home() / "Cerebro" / "Drops"
+    notas_dir = Path.home() / "Cerebro" / "Notas"
+
+    target_dir = drops_dir if drops_dir.is_dir() else notas_dir
+    if not target_dir.is_dir():
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in titulo).strip()
+    fpath = target_dir / f"{safe_title}.md"
+
+    # Si el archivo ya existe, agregar al final
+    if fpath.exists():
+        existing = fpath.read_text(encoding="utf-8")
+        content = existing + f"\n\n---\n*{ts.strftime('%Y-%m-%d %H:%M')}*\n\n{text}\n"
+    else:
+        content = f"# {titulo}\n*{ts.strftime('%Y-%m-%d %H:%M')}*\n\n{text}\n"
+
+    fpath.write_text(content, encoding="utf-8")
+    return f"Nota guardada → {fpath}"
+
+
 def cmd_exportar(arg: str) -> Optional[str]:
     """Exporta la sesión actual a un archivo Markdown o JSON."""
     history = _session_state.get("history", [])
@@ -889,6 +982,8 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/reenroll":  (cmd_reenroll,    "Registrar perfil de voz (3 rondas guiadas, ~2 min)"),
     "/telegram":  (cmd_telegram,    "Estado del servidor Telegram Receive"),
     "/webui":     (cmd_webui,       "Interfaz web: /webui [start|stop|status]"),
+    "/nota":      (cmd_nota,        "Captura rápida al Cerebro: /nota [@titulo] texto"),
+    "/comparar":  (cmd_comparar,    "Compara respuestas de múltiples LLMs: /comparar <pregunta>"),
     "/exportar":  (cmd_exportar,    "Exportar sesión: /exportar [archivo.md|archivo.json]"),
     "/historial": (cmd_historial,   "Ver historial de la sesión: /historial [N turnos]"),
     "/rutina":    (cmd_rutina,      "Macros: /rutina definir <nombre> <cmd> ; <cmd>  ·  /rutina <nombre>"),
@@ -950,6 +1045,58 @@ def _session_load() -> bool:
     return False
 
 
+def _expand_at_files(text: str) -> tuple[str, list[str]]:
+    """
+    Expande referencias @archivo en el texto.
+    Retorna (texto_expandido, lista_de_bloques_de_contexto).
+
+    Ejemplos:
+      "revisá @src/nova/router.py"
+      "compará @package.json y @requirements.txt"
+      "@Dockerfile explica cada línea"
+    """
+    import re
+    from pathlib import Path
+
+    at_pattern = re.compile(r"@([\w./\-]+[\w./\-])")
+    matches = at_pattern.findall(text)
+    if not matches:
+        return text, []
+
+    file_blocks: list[str] = []
+    cwd = Path(os.getcwd())
+
+    for ref in matches:
+        # Buscar relativo a CWD, luego al directorio del proyecto Nova
+        candidates = [
+            cwd / ref,
+            Path(__file__).resolve().parents[3] / ref,
+        ]
+        found: Optional[Path] = None
+        for candidate in candidates:
+            if candidate.is_file():
+                found = candidate
+                break
+        if found is None:
+            continue
+        try:
+            content = found.read_text(encoding="utf-8", errors="replace")
+            # Truncar archivos muy largos (max 8000 chars ~ 2000 tokens)
+            if len(content) > 8000:
+                content = content[:8000] + f"\n\n[… truncado en 8000 chars de {len(content)} total]"
+            lang = found.suffix.lstrip(".") or "text"
+            file_blocks.append(
+                f"### Archivo: {found.name} ({found})\n```{lang}\n{content}\n```"
+            )
+        except Exception:
+            continue
+
+    if not file_blocks:
+        return text, []
+
+    return text, file_blocks
+
+
 def _dispatch_slash(line: str) -> Optional[str]:
     """Si la línea empieza con `/`, la dispatcha al handler. Devuelve None si no es slash."""
     if not line.startswith("/"):
@@ -975,8 +1122,15 @@ def _route_to_llm(text: str) -> str:
 
     history = _session_state["history"]
 
+    # Expandir @archivo antes de todo
+    text, _at_file_blocks = _expand_at_files(text)
+    if _at_file_blocks:
+        c = _ANSI
+        print(f"  {c['dim']}[Leyendo {len(_at_file_blocks)} archivo(s)]{c['reset']}")
+
     # 1. Probar primero las skills locales (matcheo regex — sin latencia de red)
-    if _skills:
+    # Solo si no hay @archivos (no tiene sentido pasar código al regex de skills)
+    if _skills and not _at_file_blocks:
         skill_resp = _skills.dispatch(text)
         if skill_resp:
             history.append({"role": "user", "content": text})
@@ -1060,6 +1214,8 @@ def _route_to_llm(text: str) -> str:
         sys_parts.append(extra_ctx)
     if cerebro_ctx:
         sys_parts.append(cerebro_ctx)
+    if _at_file_blocks:
+        sys_parts.append("[Archivos de contexto]\n\n" + "\n\n".join(_at_file_blocks))
     system_msg = {"role": "system", "content": "\n\n".join(p for p in sys_parts if p)}
 
     messages = [system_msg] + list(history)
