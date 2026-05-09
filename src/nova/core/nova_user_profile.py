@@ -92,3 +92,42 @@ class UserProfile:
         if not USERS_DIR.exists():
             return []
         return [d.name for d in USERS_DIR.iterdir() if (d / "profile.json").exists()]
+
+
+# ─── Active user tracking ─────────────────────────────────────────────────────
+
+_ACTIVE_USER_FILE = Path.home() / ".nova" / "active_user"
+_active_user_id: str = "default"
+
+
+def _load_persisted_active_user() -> None:
+    global _active_user_id
+    try:
+        if _ACTIVE_USER_FILE.exists():
+            uid = _ACTIVE_USER_FILE.read_text(encoding="utf-8").strip()
+            if uid and UserProfile.exists(uid):
+                _active_user_id = uid
+    except Exception:
+        pass
+
+
+def get_active_user_id() -> str:
+    return _active_user_id
+
+
+def get_active_profile() -> "UserProfile":
+    return UserProfile.load_or_default(_active_user_id)
+
+
+def set_active_user(user_id: str) -> "UserProfile":
+    global _active_user_id
+    _active_user_id = user_id
+    try:
+        _ACTIVE_USER_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ACTIVE_USER_FILE.write_text(user_id, encoding="utf-8")
+    except Exception:
+        pass
+    return UserProfile.load_or_default(user_id)
+
+
+_load_persisted_active_user()

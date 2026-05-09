@@ -212,8 +212,8 @@ _SYSTEM_PROMPT_TEMPLATE = (
 def _build_system_prompt() -> str:
     """Construye el system prompt con el perfil del usuario activo."""
     try:
-        from nova.core.nova_user_profile import UserProfile
-        profile = UserProfile.load_or_default()
+        from nova.core.nova_user_profile import get_active_profile
+        profile = get_active_profile()
         fragment = profile.system_prompt_fragment()
     except Exception:
         fragment = "Llamas al usuario 'Señor'."

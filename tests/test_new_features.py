@@ -508,3 +508,124 @@ def test_onboarding_enter_defaults_to_senor(tmp_path, monkeypatch):
     repl._run_onboarding(fake_read)
     profile = up.UserProfile.load()
     assert profile.address == "Señor"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 7. Multi-usuario
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_set_active_user_persists(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(up, "_ACTIVE_USER_FILE", tmp_path / "active_user")
+    up.UserProfile(id="default", address="Señor").save()
+    up.UserProfile(id="maria", address="Señora").save()
+    up.set_active_user("maria")
+    assert up.get_active_user_id() == "maria"
+    assert (tmp_path / "active_user").read_text() == "maria"
+
+
+def test_get_active_profile_returns_correct_user(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(up, "_ACTIVE_USER_FILE", tmp_path / "active_user")
+    up.UserProfile(id="default", address="Señor").save()
+    up.UserProfile(id="pedro", address="Doctor").save()
+    up.set_active_user("pedro")
+    profile = up.get_active_profile()
+    assert profile.address == "Doctor"
+
+
+def test_cmd_usuario_lista(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(up, "_ACTIVE_USER_FILE", tmp_path / "active_user")
+    up.UserProfile(id="default", address="Señor").save()
+    up.UserProfile(id="ana", address="Señora").save()
+    up._active_user_id = "default"
+    result = repl.cmd_usuario("")
+    assert "default" in result
+    assert "ana" in result
+
+
+def test_cmd_usuario_cambiar(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(up, "_ACTIVE_USER_FILE", tmp_path / "active_user")
+    up.UserProfile(id="default", address="Señor").save()
+    up.UserProfile(id="ana", address="Señora").save()
+    up._active_user_id = "default"
+    result = repl.cmd_usuario("cambiar ana")
+    assert "ana" in result
+    assert up.get_active_user_id() == "ana"
+
+
+def test_cmd_usuario_cambiar_nonexistent(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    up.UserProfile(id="default", address="Señor").save()
+    result = repl.cmd_usuario("cambiar noexiste")
+    assert "no encontrado" in result.lower()
+
+
+def test_cmd_usuario_nuevo_wizard(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+
+    # Start wizard
+    result = repl.cmd_usuario("nuevo carlos")
+    assert "carlos" in result
+    assert repl._WIZARD_STATE.get("type") == "usuario_nuevo"
+
+    # Step 0 — address
+    repl._wizard_handle("Doctor")
+    # Step 1 — notes (completes wizard)
+    final = repl._wizard_handle("Médico especialista")
+    assert "carlos" in final
+    p = up.UserProfile.load("carlos")
+    assert p is not None
+    assert p.address == "Doctor"
+    assert "Médico" in p.notes
+    assert not repl._WIZARD_STATE
+
+
+def test_cmd_usuario_borrar(tmp_path, monkeypatch):
+    import shutil
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(up, "_ACTIVE_USER_FILE", tmp_path / "active_user")
+    up.UserProfile(id="default", address="Señor").save()
+    up.UserProfile(id="temp", address="Señora").save()
+    up._active_user_id = "default"
+    result = repl.cmd_usuario("borrar temp")
+    assert "eliminado" in result.lower()
+    assert not up.UserProfile.exists("temp")
+
+
+def test_cmd_usuario_borrar_default_rejected(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    result = repl.cmd_usuario("borrar default")
+    assert "no se puede" in result.lower()
+
+
+def test_cmd_usuario_in_slash_commands():
+    from nova.cli.repl import SLASH_COMMANDS
+    assert "/usuario" in SLASH_COMMANDS
+    assert "/user" in SLASH_COMMANDS
+
+
+def test_list_users_multi(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    up.UserProfile(id="default").save()
+    up.UserProfile(id="user2").save()
+    up.UserProfile(id="user3").save()
+    users = up.UserProfile.list_users()
+    assert set(users) == {"default", "user2", "user3"}

@@ -103,11 +103,14 @@ class NovaVoiceSTT:
     #  Registro de voz
     # ─────────────────────────────────────────
 
-    def enroll_speaker(self, rounds: int = 3):
+    def enroll_speaker(self, rounds: int = 3, output_path: "str | Path | None" = None):
         """
         Enroll en múltiples rondas con frases guiadas.
         Promedia los vectores MFCC para un perfil robusto y representativo.
+        output_path: ruta donde guardar el .npy (default: PROFILE_PATH global)
         """
+        from pathlib import Path as _Path
+        _save_path = _Path(output_path) if output_path else PROFILE_PATH
         GUIDED_ROUNDS = [
             {
                 "titulo": "RONDA 1 — Comandos típicos",
@@ -220,9 +223,10 @@ class NovaVoiceSTT:
             else:
                 print("  ✅ Perfil de alta calidad.")
 
-        np.save(str(PROFILE_PATH), profile)
+        _save_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(str(_save_path), profile)
         self.voice_profile = profile
-        print(f"\n✅ Perfil guardado en: {PROFILE_PATH}")
+        print(f"\n✅ Perfil guardado en: {_save_path}")
         print(f"   Rondas usadas: {len(feature_vectors)}/{len(GUIDED_ROUNDS)}")
         print(f"   Verificación de hablante ACTIVA (umbral={self.threshold}).")
         print(f"\n   Podés ajustar la sensibilidad en .env: SPEAKER_THRESHOLD=0.80\n")

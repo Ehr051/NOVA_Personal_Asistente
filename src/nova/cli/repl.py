@@ -587,16 +587,29 @@ def cmd_cerebro(arg: str) -> Optional[str]:
 
 
 def cmd_reenroll(_: str) -> Optional[str]:
-    """Registro guiado de voz del usuario (3 rondas, ~2 min)."""
+    """Registro guiado de voz del usuario activo (3 rondas, ~2 min)."""
     try:
         from nova.tools.nova_voice_stt import NovaVoiceSTT
     except ImportError:
         return "Módulo de voz no disponible (falta librosa/soundfile)."
-    print("\n  Para salir antes de tiempo presioná Ctrl+C en cualquier momento.\n")
+    from nova.core.nova_user_profile import get_active_user_id, UserProfile
+    user_id = get_active_user_id()
+    profile = UserProfile.load_or_default(user_id)
+    voice_path = profile.voice_path
+    print(f"\n  Registrando voz para usuario '{user_id}' ({profile.address})")
+    print("  Para salir antes de tiempo presioná Ctrl+C en cualquier momento.\n")
     try:
         stt = NovaVoiceSTT()
-        stt.enroll_speaker(rounds=3)
-        return "Perfil de voz guardado. La verificación de hablante está activa."
+        stt.enroll_speaker(rounds=3, output_path=voice_path)
+        # Mark profile as enrolled and reload novaesp profiles
+        profile.voice_enrolled = True
+        profile.save()
+        try:
+            import nova.lang.novaesp as _esp
+            _esp._load_all_speaker_profiles()
+        except Exception:
+            pass
+        return f"Perfil de voz guardado para '{user_id}'. Identificación automática activa."
     except KeyboardInterrupt:
         return "Re-enroll cancelado."
     except Exception as e:
@@ -782,6 +795,34 @@ def _wizard_handle(line: str) -> str:
                 f"\n  Modo '{name}' creado en {path}\n"
                 f"  Activar con: /modo {name}\n"
                 f"  Editá el JSON para ajustar en cualquier momento."
+            )
+
+    if wtype == "usuario_nuevo":
+        user_id = _WIZARD_STATE["user_id"]
+
+        if step == 0:
+            raw = line.strip()
+            if not raw:
+                address = "Señor"
+            elif raw.lower() in ("señor", "senor", "sr", "sr."):
+                address = "Señor"
+            elif raw.lower() in ("señora", "senora", "sra", "sra."):
+                address = "Señora"
+            else:
+                address = raw
+            data["address"] = address
+            _WIZARD_STATE["step"] = 1
+            return f"{c['dim']}  Contexto opcional (ej: 'Ingeniero de software' — Enter para saltar):{c['reset']}"
+
+        if step >= 1:
+            from nova.core.nova_user_profile import UserProfile
+            data["notes"] = line.strip()
+            profile = UserProfile(id=user_id, address=data["address"], notes=data["notes"])
+            profile.save()
+            _WIZARD_STATE.clear()
+            return (
+                f"\n  Usuario '{user_id}' creado — {profile.address}\n"
+                f"  Activar: /usuario cambiar {user_id}"
             )
 
     # Unknown wizard type — bail out
@@ -1321,6 +1362,88 @@ def _run_onboarding(read_fn) -> None:
     print()
 
 
+# ─── MULTI-USUARIO ────────────────────────────────────────────────────────────
+
+def cmd_usuario(arg: str) -> Optional[str]:
+    """
+    Gestión de múltiples usuarios en el mismo dispositivo.
+
+    /usuario                   — usuario activo + lista
+    /usuario lista             — listar todos
+    /usuario nuevo <id>        — crear nuevo usuario (wizard)
+    /usuario cambiar <id>      — cambiar usuario activo
+    /usuario borrar <id>       — eliminar usuario
+    """
+    import shutil as _shutil
+    from nova.core.nova_user_profile import (
+        UserProfile, USERS_DIR, get_active_user_id, set_active_user,
+    )
+    c = _ANSI
+
+    parts = arg.strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+    val = parts[1].strip() if len(parts) > 1 else ""
+
+    # ── lista / vacío ─────────────────────────────────────────────────────────
+    if not sub or sub in ("lista", "list"):
+        active = get_active_user_id()
+        users  = UserProfile.list_users()
+        if not users:
+            return "No hay usuarios registrados. Usá /usuario nuevo <id> para crear uno."
+        lines = [f"Usuario activo: {c['bold']}{active}{c['reset']}\n", "Usuarios registrados:"]
+        for uid in sorted(users):
+            p = UserProfile.load(uid)
+            mark  = f"  {c['dim']}◀ activo{c['reset']}" if uid == active else ""
+            voice = " 🎤" if p and p.voice_enrolled else ""
+            addr  = p.address if p else "?"
+            lines.append(f"  {uid:<16} {addr}{voice}{mark}")
+        lines.append(f"\n{c['dim']}Crear: /usuario nuevo <id>  |  Cambiar: /usuario cambiar <id>{c['reset']}")
+        return "\n".join(lines)
+
+    # ── nuevo (wizard) ────────────────────────────────────────────────────────
+    if sub == "nuevo":
+        new_id = val.split()[0].lower() if val else ""
+        if not new_id:
+            return "Uso: /usuario nuevo <id>  (ej: /usuario nuevo maria)"
+        if UserProfile.exists(new_id):
+            return f"El usuario '{new_id}' ya existe. Usá /usuario cambiar {new_id} para activarlo."
+        _WIZARD_STATE.clear()
+        _WIZARD_STATE.update({"type": "usuario_nuevo", "user_id": new_id, "step": 0, "data": {}})
+        return (
+            f"Nuevo usuario '{new_id}' — respondé las preguntas (Enter para defaults):\n"
+            f"{c['dim']}  ¿Cómo debe llamarlo Nova? (Señor / Señora / nombre — Enter → Señor):{c['reset']}"
+        )
+
+    # ── cambiar ───────────────────────────────────────────────────────────────
+    if sub in ("cambiar", "switch", "activar", "usar"):
+        uid = val.strip().lower()
+        if not uid:
+            return "Uso: /usuario cambiar <id>"
+        if not UserProfile.exists(uid):
+            users = UserProfile.list_users()
+            return f"Usuario '{uid}' no encontrado. Disponibles: {', '.join(users)}"
+        profile = set_active_user(uid)
+        _apply_profile_to_router(profile)
+        return f"Usuario activo: '{uid}' — {profile.address}."
+
+    # ── borrar ────────────────────────────────────────────────────────────────
+    if sub in ("borrar", "eliminar", "delete"):
+        uid = val.strip().lower()
+        if not uid:
+            return "Uso: /usuario borrar <id>"
+        if uid == "default":
+            return "No se puede borrar el usuario 'default'."
+        if not UserProfile.exists(uid):
+            return f"Usuario '{uid}' no encontrado."
+        _shutil.rmtree(USERS_DIR / uid, ignore_errors=True)
+        if get_active_user_id() == uid:
+            p = set_active_user("default")
+            _apply_profile_to_router(p)
+        return f"Usuario '{uid}' eliminado."
+
+    return "Uso: /usuario [lista|nuevo <id>|cambiar <id>|borrar <id>]"
+
+
 SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     # ── Principales (español) ──────────────────────────────────────────────────
     "/ayuda":     (cmd_help,        "Lista de comandos"),
@@ -1354,6 +1477,8 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/ckpt":       (cmd_checkpoint,  "→ /checkpoint"),
     "/perfil":     (cmd_perfil,      "Perfil: /perfil · /perfil tratamiento Señora · /perfil notas <texto>"),
     "/profile":    (cmd_perfil,      "→ /perfil"),
+    "/usuario":    (cmd_usuario,     "Multi-usuario: /usuario nuevo <id> · cambiar <id> · lista · borrar <id>"),
+    "/user":       (cmd_usuario,     "→ /usuario"),
     "/export":    (cmd_exportar,    "→ /exportar"),
     "/history":   (cmd_historial,   "→ /historial"),
     "/routine":   (cmd_rutina,      "→ /rutina"),

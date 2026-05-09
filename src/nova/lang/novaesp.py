@@ -76,29 +76,95 @@ except ImportError:
 
 _SPEAKER_PROFILE: "np.ndarray | None" = None
 _SPEAKER_THRESHOLD = float(os.getenv("SPEAKER_THRESHOLD", "0.87"))
-_SPEAKER_VERIFY = False   # se activa si se carga un perfil
+_SPEAKER_VERIFY = False   # se activa si hay al menos un perfil cargado
 
-def _load_speaker_profile() -> None:
-    """Busca nova_voice_profile.npy en ubicaciones conocidas y lo carga."""
-    global _SPEAKER_PROFILE, _SPEAKER_VERIFY
-    _me = os.path.dirname(__file__)
-    candidates = [
-        os.path.join(_me, "..", "..", "..", "nova_voice_profile.npy"),      # raíz proyecto
-        os.path.join(_me, "..", "tools", "nova_voice_profile.npy"),           # src/nova/tools/
-        os.path.expanduser("~/.nova/nova_voice_profile.npy"),
-    ]
-    for p in candidates:
-        p = os.path.abspath(p)
-        if os.path.exists(p):
-            try:
-                import numpy as np
-                _SPEAKER_PROFILE = np.load(p)
-                _SPEAKER_VERIFY = True
-                log.info("[Speaker] Perfil cargado: %s — verificación ACTIVA (umbral=%.2f)", os.path.basename(p), _SPEAKER_THRESHOLD)
-                return
-            except Exception as e:
-                log.warning("[Speaker] Error cargando perfil: %s", e)
-    log.info("[Speaker] Sin perfil de voz — wake word obligatoria (di '%s' para activar)", os.getenv("WAKE_WORD", "nova"))
+# Multi-user: user_id → embedding vector
+_ALL_SPEAKER_PROFILES: "dict[str, np.ndarray]" = {}
+
+
+def _load_all_speaker_profiles() -> None:
+    """
+    Carga todos los perfiles de voz de ~/.nova/users/*/voice.npy (multi-usuario).
+    También busca el perfil legacy ~/.nova/nova_voice_profile.npy y lo asigna a 'default'.
+    """
+    global _SPEAKER_PROFILE, _SPEAKER_VERIFY, _ALL_SPEAKER_PROFILES
+    try:
+        import numpy as np
+        from nova.core.nova_user_profile import USERS_DIR
+        _ALL_SPEAKER_PROFILES.clear()
+        # Multi-user profiles
+        if USERS_DIR.exists():
+            for user_dir in USERS_DIR.iterdir():
+                voice_path = user_dir / "voice.npy"
+                if voice_path.exists():
+                    try:
+                        _ALL_SPEAKER_PROFILES[user_dir.name] = np.load(str(voice_path))
+                    except Exception as e:
+                        log.warning("[Speaker] Error cargando voz de %s: %s", user_dir.name, e)
+        # Legacy single-user profile → assign to 'default' if not already loaded
+        if "default" not in _ALL_SPEAKER_PROFILES:
+            _me = os.path.dirname(__file__)
+            legacy_candidates = [
+                os.path.join(_me, "..", "..", "..", "nova_voice_profile.npy"),
+                os.path.expanduser("~/.nova/nova_voice_profile.npy"),
+            ]
+            for p in legacy_candidates:
+                p = os.path.abspath(p)
+                if os.path.exists(p):
+                    try:
+                        _ALL_SPEAKER_PROFILES["default"] = np.load(p)
+                        break
+                    except Exception:
+                        pass
+        if _ALL_SPEAKER_PROFILES:
+            _SPEAKER_VERIFY = True
+            _SPEAKER_PROFILE = _ALL_SPEAKER_PROFILES.get("default")
+            log.info("[Speaker] %d perfil(es) cargado(s): %s (umbral=%.2f)",
+                     len(_ALL_SPEAKER_PROFILES), list(_ALL_SPEAKER_PROFILES), _SPEAKER_THRESHOLD)
+        else:
+            log.info("[Speaker] Sin perfiles de voz — wake word obligatoria (di '%s' para activar)",
+                     os.getenv("WAKE_WORD", "nova"))
+    except Exception as e:
+        log.warning("[Speaker] Error en _load_all_speaker_profiles: %s", e)
+
+
+# Keep old name as alias so external code that calls _load_speaker_profile() still works
+_load_speaker_profile = _load_all_speaker_profiles
+
+
+def _identify_speaker(wav_bytes: bytes) -> "str | None":
+    """
+    Identifica al hablante comparando el audio contra todos los perfiles enrollados.
+    Retorna el user_id del mejor match o None si nadie supera el umbral.
+    """
+    if not _HAS_LIBROSA or not _ALL_SPEAKER_PROFILES:
+        return None
+    if _nova_speaking or time.time() < _tts_until:
+        return None  # eco de Nova
+
+    try:
+        import numpy as np
+        import librosa, io
+        y, _ = librosa.load(io.BytesIO(wav_bytes), sr=16000, mono=True)
+        if len(y) < 16000 * 0.3:
+            return None
+        mfccs = librosa.feature.mfcc(y=y, sr=16000, n_mfcc=40)
+        feats = np.concatenate([mfccs.mean(axis=1), mfccs.std(axis=1)])
+        norm = np.linalg.norm(feats)
+        if norm == 0:
+            return None
+        feats = feats / norm
+
+        best_user, best_sim = None, _SPEAKER_THRESHOLD
+        for user_id, profile_vec in _ALL_SPEAKER_PROFILES.items():
+            sim = float(np.dot(profile_vec, feats))
+            if sim > best_sim:
+                best_sim, best_user = sim, user_id
+        log.debug("[Speaker] best=%s sim=%.3f", best_user, best_sim)
+        return best_user
+    except Exception as e:
+        log.warning("[Speaker] Error identificando voz: %s", e)
+        return None
 
 def _is_my_voice(wav_bytes: bytes) -> bool:
     """Verifica si el audio pertenece al usuario enrollado usando MFCC."""
@@ -680,12 +746,27 @@ def listen(
         hud.put_state(status="IDLE")
         return None
 
-    # ── Verificación de hablante (si hay perfil enrollado) ─────────────────────
+    # ── Identificación de hablante (multi-usuario o single-user) ─────────────────
     if _SPEAKER_VERIFY:
         wav_bytes = audio.get_wav_data()
-        if not _is_my_voice(wav_bytes):
-            hud.put_state(status="IDLE")
-            return None   # voz de otra persona → ignorar sin print
+        if _ALL_SPEAKER_PROFILES:
+            # Multi-user: identificar quién habla y cambiar usuario activo
+            identified = _identify_speaker(wav_bytes)
+            if identified is None:
+                hud.put_state(status="IDLE")
+                return None  # voz no reconocida → ignorar
+            try:
+                from nova.core.nova_user_profile import get_active_user_id, set_active_user
+                if identified != get_active_user_id():
+                    profile = set_active_user(identified)
+                    log.info("[Speaker] Usuario identificado: %s (%s)", identified, profile.address)
+            except Exception:
+                pass
+        else:
+            # Single-user legacy: verificar si es mi voz
+            if not _is_my_voice(wav_bytes):
+                hud.put_state(status="IDLE")
+                return None
 
     # Obtener texto con confianza (show_all=True para filtrar música/TV)
     try:
