@@ -548,9 +548,10 @@ def speak(text: str, hud: NovaHUD, lang: str = "es") -> None:
             pass
         _tmp_audio = None
 
-    # Cooldown proporcional a la longitud del texto: ~55ms/char, mínimo TTS_COOLDOWN
+    # Cooldown basado en palabras (~2.8 palabras/seg), cap 45s, mínimo TTS_COOLDOWN
     _nova_speaking = False
-    _tts_until = time.time() + max(TTS_COOLDOWN, len(text) * 0.055)
+    _words = len(text.split())
+    _tts_until = time.time() + max(TTS_COOLDOWN, min(_words / 2.8, 45.0))
     hud.put_state(status="IDLE")
 
 
@@ -1512,13 +1513,14 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             speak(response, hud, lang=resp_lang)
 
     # ── Resumen final ─────────────────────────────────────────
-    stats = router.get_session_summary()
-    print(f"\n{'─'*56}")
-    print(
-        f"  Sesión terminada | {stats['total_tokens']} tokens | "
-        f"${stats['cost_usd']:.4f} | {stats['budget_consumed_pct']:.1f}% presupuesto"
-    )
-    print(f"{'─'*56}")
+    if router is not None:
+        stats = router.get_session_summary()
+        print(f"\n{'─'*56}")
+        print(
+            f"  Sesión terminada | {stats['total_tokens']} tokens | "
+            f"${stats['cost_usd']:.4f} | {stats['budget_consumed_pct']:.1f}% presupuesto"
+        )
+        print(f"{'─'*56}")
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────────

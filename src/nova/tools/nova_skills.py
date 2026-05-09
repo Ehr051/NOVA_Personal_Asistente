@@ -1514,10 +1514,13 @@ def _restart_nova() -> str:
     return "Reiniciando en un momento, Señor."
 
 def _update_env(key: str, value: str) -> None:
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    from pathlib import Path as _Path
+    env_path = _Path(__file__).parents[3] / ".env"
     try:
-        with open(env_path, "r") as f:
-            lines = f.readlines()
+        if env_path.exists():
+            lines = env_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        else:
+            lines = []
         updated = False
         for i, line in enumerate(lines):
             if line.startswith(f"{key}="):
@@ -1526,10 +1529,10 @@ def _update_env(key: str, value: str) -> None:
                 break
         if not updated:
             lines.append(f"{key}={value}\n")
-        with open(env_path, "w") as f:
-            f.writelines(lines)
+        env_path.write_text("".join(lines), encoding="utf-8")
+        os.environ[key] = value
     except Exception:
-        pass  # no fatal si falla escribir .env
+        pass
 
 
 def get_system_status() -> str:
@@ -3085,7 +3088,7 @@ def skill_gmail_buscar(texto: str = "") -> str:
 def skill_calendar(texto: str = "") -> str:
     """Consulta eventos de Google Calendar directo (sin n8n)."""
     if not _HAS_GOOGLE:
-        return skill_consultar_calendario(texto) if _HAS_N8N else "Calendar no disponible, Señor."
+        return skill_calendario(texto) if _HAS_N8N else "Calendar no disponible, Señor."
     import re
     texto_l = texto.lower()
     fecha = "mañana" if "mañana" in texto_l else "semana" if "semana" in texto_l else "hoy"
@@ -3562,13 +3565,16 @@ def skill_gestos_calibrar(_=None) -> str:
         return _iniciar_detector(modo="mesa")
     # Si ya está corriendo, enviarle señal de calibración via subprocess
     import subprocess
-    # El detector escucha 'C' para calibrar — enviamos via xdotool si está disponible
-    try:
-        subprocess.run(["xdotool", "key", "c"], capture_output=True)
-        return "Señal de calibración enviada, Señor. Mirá la ventana del detector."
-    except Exception:
-        return ("Detector activo. Para calibrar: hacé click en la ventana del detector "
-                "y presioná la tecla 'C', Señor.")
+    # El detector escucha 'C' para calibrar
+    import sys as _sys
+    if _sys.platform == "linux":
+        try:
+            subprocess.run(["xdotool", "key", "c"], capture_output=True)
+            return "Señal de calibración enviada, Señor. Mirá la ventana del detector."
+        except Exception:
+            pass
+    return ("Detector activo. Para calibrar: hacé click en la ventana del detector "
+            "y presioná la tecla 'C', Señor.")
 
 
 def skill_gestos_gui(_=None) -> str:
@@ -3739,7 +3745,7 @@ def skill_stats_modelos(_=None) -> str:
             if not isinstance(info, dict):
                 continue
             ok    = info.get("success", 0)
-            fail  = info.get("failure", 0)
+            fail  = info.get("fail", 0)
             total = ok + fail
             if total == 0:
                 continue
@@ -4662,8 +4668,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         lambda: __import__('datetime').datetime.now().strftime("Son las %H:%M del %d/%m/%Y"), None),
     "skill_run":       ("Ejecutar un comando de terminal en el sistema",
                         run_command, "text"),
-    "skill_volumen":   ("Cambiar el volumen del sistema a un nivel",
-                        set_volume, "text"),
+    "skill_volumen":   ("Cambiar el volumen del sistema a un nivel (0-100)",
+                        lambda t="50": set_volume(int(t) if str(t).strip().isdigit() else 50), "text"),
     "ver_camara":      ("Ver qué hay frente a la cámara, identificar objeto, qué estoy sosteniendo",
                         lambda t="": skill_ver_camara(t), "text"),
     "ver_pantalla":    ("Analizar o describir lo que hay en la pantalla ahora",

@@ -347,9 +347,9 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
 
 # ─── CLAUDE / ANTHROPIC MODELS ──────────────────────────────────────────────
 CLAUDE_MODELS: dict[int, list[str]] = {
-    1: ["claude-haiku-4-5-20251001"],          # ⚡ Rápido y barato
-    2: ["claude-sonnet-4-6"],                  # 🎯 Balance calidad/costo
-    3: ["claude-opus-4-6", "claude-sonnet-4-6"],  # 🧠 Máxima capacidad
+    1: ["claude-haiku-4-5-20251001"],                    # ⚡ Rápido y barato
+    2: ["claude-sonnet-4-6"],                            # 🎯 Balance calidad/costo
+    3: ["claude-opus-4-7", "claude-sonnet-4-6"],         # 🧠 Máxima capacidad
 }
 
 # ─── OLLAMA MODELOS DE HERRAMIENTAS/TOOL USE ───────────────────────────────
