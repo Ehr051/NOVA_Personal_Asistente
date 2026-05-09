@@ -9,10 +9,17 @@ import sys
 import json
 import threading
 import time
-import cv2
-import numpy as np
 from datetime import datetime
 from pathlib import Path
+
+try:
+    import cv2
+    import numpy as np
+    _HAS_CV2 = True
+except Exception:
+    cv2 = None  # type: ignore[assignment]
+    np = None   # type: ignore[assignment]
+    _HAS_CV2 = False
 
 # Optional imports with fallbacks
 try:
@@ -82,7 +89,7 @@ def _vision_analizar_on_demand(
 
 def _gesture_worker():
     """Background thread to update gesture data using existing detector."""
-    if not (_GESTOR_AVAILABLE and _HAS_MEDIAPIPE):
+    if not (_GESTOR_AVAILABLE and _HAS_MEDIAPIPE and _HAS_CV2):
         return
     try:
         detector = DetectorGestos(modo="pantalla")
