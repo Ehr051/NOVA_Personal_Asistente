@@ -627,7 +627,7 @@ def _monitor_barge_in(proc: subprocess.Popen) -> None:
 
 # Leído del .env — cambia WAKE_WORD para renombrar al asistente
 _WAKE_BASE  = os.getenv("WAKE_WORD", "nova").lower().strip()
-ASSISTANT_NAME = os.getenv("ASSISTANT_NAME", "Auxiliar")
+ASSISTANT_NAME = os.getenv("ASSISTANT_NAME", "Asistente")
 
 # Google STT a veces transcribe "Nova" como estas variantes
 _EXTRA_VARIANTS: dict[str, list[str]] = {
@@ -1169,7 +1169,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
         # Skills siempre locales (independiente del daemon)
         skill_resp = skills.dispatch(text)
         if skill_resp:
-            print(f"Auxiliar: {skill_resp}")
+            print(f"Asistente: {skill_resp}")
             hud.put_state(status="SKILL", response_text=skill_resp, model_info="[SKILL LOCAL]")
             history.append({"role": "user", "content": text})
             history.append({"role": "assistant", "content": skill_resp})
@@ -1188,7 +1188,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             try:
                 response = _daemon_client.chat(text, session="hud")
                 history.append({"role": "assistant", "content": response})
-                print(f"Auxiliar: {response}")
+                print(f"Asistente: {response}")
                 hud.put_state(status="SPEAKING", response_text=response, model_info="[DAEMON]")
                 speak(response, hud, lang=_SESSION_LANG)
             except Exception as e:
@@ -1214,7 +1214,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                 provider   = result.get("provider", "?")
                 budget_pct = result.get("budget_remaining_pct", 100.0)
                 model_info = f"Tier {tier} {TIER_LABELS.get(tier,'?')} | {model} | {tokens} tk"
-                print(f"Auxiliar: {response}")
+                print(f"Asistente: {response}")
                 hud.put_state(
                     status="SPEAKING", response_text=response, model_info=model_info,
                     tokens_used=tokens, provider=provider, budget_remaining_pct=budget_pct,
@@ -1258,7 +1258,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
     print(f"  Voz: {NOVA_VOICE}  |  Wake word: '{_WAKE_BASE.capitalize()}'")
     print(f"  Di '{_WAKE_BASE.capitalize()} salir' para terminar.")
     print(f"{'═'*56}\n")
-    print(f"Auxiliar: {greeting}")
+    print(f"Asistente: {greeting}")
     hud.put_state(status="SPEAKING", response_text=greeting)
     speak(greeting, hud)
 
@@ -1285,7 +1285,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
         # ── Solo "Nova" sin comando → saludo breve ──────────
         if user_input == "__wake_only__":
             ack = "¿Sí, Señor?"
-            print(f"\nAuxiliar: {ack}")
+            print(f"\nAsistente: {ack}")
             hud.put_state(status="SPEAKING", user_text="Nova", response_text=ack)
             speak(ack, hud)
             last_activation_ts = time.time()
@@ -1309,7 +1309,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             if _RE_STOP_DICTATION.search(lower_input):
                 dictation_mode = False
                 done = "Dictado finalizado, Señor."
-                print(f"Auxiliar: {done}")
+                print(f"Asistente: {done}")
                 hud.put_state(status="SPEAKING", response_text=done)
                 speak(done, hud)
                 last_activation_ts = time.time()
@@ -1331,7 +1331,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                 "Dictado iniciado. Habla y escribiré todo en la app activa. "
                 "Di 'finalizar dictado' para detenerme."
             )
-            print(f"Auxiliar: {msg}")
+            print(f"Asistente: {msg}")
             hud.put_state(status="SPEAKING", response_text=msg)
             speak(msg, hud)
             continue
@@ -1348,7 +1348,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                             "cerrar completamente", "apagar completamente"}:
             stats    = router.get_session_summary()
             farewell = f"Cerrando. Usé {stats['total_tokens']} tokens. Hasta pronto, Señor."
-            print(f"Auxiliar: {farewell}")
+            print(f"Asistente: {farewell}")
             hud.put_state(status="SPEAKING", response_text=farewell)
             speak(farewell, hud)
             stop_event.set()
@@ -1408,7 +1408,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
         skill_resp = skills.dispatch(user_input)
         if skill_resp is not None:
             print(f"  [SKILL] {skill_resp[:100]}")
-            print(f"Auxiliar: {skill_resp}")
+            print(f"Asistente: {skill_resp}")
             hud.put_state(
                 status="SKILL",
                 response_text=skill_resp,
@@ -1431,7 +1431,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             try:
                 response = _daemon_client.chat(user_input, session="hud")
                 history.append({"role": "assistant", "content": response})
-                print(f"Auxiliar: {response}")
+                print(f"Asistente: {response}")
                 hud.put_state(
                     status="SPEAKING",
                     response_text=response,
@@ -1441,7 +1441,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             except Exception as e:
                 err = "Tuve un problema con el proceso central, Señor. Intente de nuevo."
                 print(f"  [error daemon: {e}]")
-                print(f"Auxiliar: {err}")
+                print(f"Asistente: {err}")
                 history.pop()
                 hud.put_state(status="IDLE", response_text=err)
                 speak(err, hud)
@@ -1459,7 +1459,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             except RuntimeError as e:
                 err = "Tuve un problema conectando con los modelos, Señor. Intente de nuevo."
                 print(f"  [error: {e}]")
-                print(f"Auxiliar: {err}")
+                print(f"Asistente: {err}")
                 history.pop()
                 hud.put_state(status="IDLE", response_text=err)
                 speak(err, hud)
@@ -1477,7 +1477,7 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             )
             print(f"  ┌ {model_info}")
             print(f"  └ sesión: {result['session_tokens']} tokens")
-            print(f"Auxiliar: {response}")
+            print(f"Asistente: {response}")
 
             hud.put_state(
                 status="SPEAKING",

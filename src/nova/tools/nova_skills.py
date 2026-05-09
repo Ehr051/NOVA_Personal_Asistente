@@ -1534,7 +1534,7 @@ def _update_env(key: str, value: str) -> None:
 
 def get_system_status() -> str:
     """Lee el .env y devuelve el estado actual de los parámetros críticos."""
-    name     = os.getenv("ASSISTANT_NAME", "Auxiliar")
+    name     = os.getenv("ASSISTANT_NAME", "Asistente")
     voice    = os.getenv("NOVA_VOICE", "Reed")
     rate     = os.getenv("NOVA_VOICE_RATE", "150")
     barge_in = os.getenv("BARGE_IN_THRESHOLD", "600")
