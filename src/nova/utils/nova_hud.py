@@ -553,6 +553,22 @@ class NovaWindow(QWidget):
         # Retry after Chromium initializes (focusProxy may be None initially)
         QTimer.singleShot(600,  self._install_view_filter)
         QTimer.singleShot(2000, self._install_view_filter)
+        # macOS: Qt.WindowStaysOnTopHint doesn't fight other apps — use Cocoa level
+        if sys.platform == "darwin":
+            QTimer.singleShot(300, self._set_mac_floating_level)
+
+    def _set_mac_floating_level(self):
+        """Set NSFloatingWindowLevel so HUD stays above all normal windows on macOS."""
+        try:
+            import objc
+            from AppKit import NSFloatingWindowLevel
+            ptr = int(self.winId())
+            ns_view = objc.objc_object(c_void_p=ptr)
+            ns_window = ns_view.window()
+            if ns_window:
+                ns_window.setLevel_(NSFloatingWindowLevel)  # 3 — above normal, below system
+        except Exception:
+            pass  # PyObjC not available — Qt flag is the best we can do
 
     def _install_view_filter(self):
         from PyQt5.QtWidgets import QWidget

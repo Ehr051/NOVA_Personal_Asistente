@@ -801,8 +801,29 @@ def listen(
         hud.put_state(status="THINKING", user_text=text)
         return text
 
-    # Con perfil de voz verificado → saltamos wake word (ya sabemos que es el usuario)
-    if _SPEAKER_VERIFY:
+    # Con perfil de voz verificado: wake word para iniciar, luego ventana de contexto
+    # NO se bypasea completamente — TV y conversaciones de fondo pasarían (problema real).
+    # NOVA_WAKE_FREE=1 en .env desactiva esto para ambientes muy silenciosos.
+    if _SPEAKER_VERIFY and os.getenv("NOVA_WAKE_FREE", "0") != "1":
+        cmd = _extract_command(text)
+        if cmd is not None:
+            hud.put_state(status="THINKING", user_text=text)
+            return cmd if cmd else "__wake_only__"
+        # Ventana de contexto activa: aceptar follow-up (sin wake word)
+        _ctx_min_words = int(os.getenv("CONTEXT_MIN_WORDS", "2"))
+        _ctx_confidence = float(os.getenv("CONTEXT_CONFIDENCE", "0.75"))
+        words = text.strip().split()
+        if (context_active
+                and len(words) >= _ctx_min_words
+                and confidence >= _ctx_confidence
+                and _is_speech_not_music(audio)):
+            hud.put_state(status="THINKING", user_text=text)
+            return text
+        log.debug("[STT] verified speaker, no wake word, not in context window — ignorando: '%s'", text[:60])
+        hud.put_state(status="IDLE")
+        return None
+
+    if _SPEAKER_VERIFY:  # NOVA_WAKE_FREE=1 — bypasear wake word completamente
         hud.put_state(status="THINKING", user_text=text)
         return text
 
@@ -1202,9 +1223,15 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
     hud.set_text_callback(_on_text_input)
 
     if _SPEAKER_VERIFY:
+        _wake_free = os.getenv("NOVA_WAKE_FREE", "0") == "1"
         greeting = (
             f"Sistema {ASSISTANT_NAME} activado con reconocimiento de voz. "
-            f"Solo respondo a usted, Señor. No necesita palabra de activación."
+            + (
+                f"Solo respondo a usted, Señor. No necesita palabra de activación."
+                if _wake_free else
+                f"Reconozco su voz, Señor. Di '{_WAKE_BASE.capitalize()}' para hablar, "
+                f"luego podés continuar sin wake word por {FOLLOWUP_WINDOW_SEC} segundos."
+            )
         )
     elif REQUIRE_WAKE_WORD:
         greeting = (
@@ -1235,7 +1262,9 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             time.sleep(0.2)
             continue
 
-        context_active = (time.time() - last_activation_ts) <= FOLLOWUP_WINDOW_SEC
+        # Verified speakers get a longer context window (up to 90s) for natural conversation
+        _ctx_window = 90 if _SPEAKER_VERIFY else FOLLOWUP_WINDOW_SEC
+        context_active = (time.time() - last_activation_ts) <= _ctx_window
 
         # ── Escuchar ───────────────────────────────────────────
         user_input = listen(
