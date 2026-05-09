@@ -177,6 +177,31 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["action"],
             },
         ),
+        types.Tool(
+            name="nova_agent",
+            description=(
+                "Ejecuta el loop agéntico autónomo de Nova: Plan → Execute → Verify. "
+                "Nova genera un plan numerado, lo ejecuta usando sus 48+ herramientas "
+                "(sistema, web, git, calendario, clima, código, Blender, memoria, etc.) "
+                "y devuelve el resultado con el log de pasos. "
+                "Ideal para tareas multi-paso que requieren combinar varias herramientas."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "description": "Objetivo en lenguaje natural (ej: 'buscá el precio de bitcoin y guardalo en el Cerebro')",
+                    },
+                    "max_iter": {
+                        "type": "integer",
+                        "description": "Máximo de iteraciones del loop (default: 6)",
+                        "default": 6,
+                    },
+                },
+                "required": ["goal"],
+            },
+        ),
     ]
 
 
@@ -263,6 +288,39 @@ async def _dispatch_tool(name: str, args: dict) -> str:
         elif action == "pr":
             return skill_git_pr()
         return f"Acción desconocida: {action}"
+
+    elif name == "nova_agent":
+        goal = args.get("goal", "").strip()
+        if not goal:
+            return "Objetivo vacío."
+        if not _router:
+            return "Router no disponible."
+        try:
+            from nova.tools.nova_tools_schemas import get_tool_schemas
+            from nova.tools.nova_skills import execute_tool
+            schemas = get_tool_schemas()
+            log_lines: list[str] = []
+            def _cb(msg: str) -> None:
+                log_lines.append(msg)
+            result = _router.route_agentic(
+                goal=goal,
+                tools=schemas,
+                executor_fn=execute_tool,
+                progress_cb=_cb,
+                max_iter=int(args.get("max_iter", 6)),
+                force_tier=2,
+            )
+            plan    = result.get("plan", "")
+            response = result.get("response", "")
+            iters   = result.get("iters", 0)
+            log_text = "\n".join(log_lines)
+            return (
+                f"📋 Plan:\n{plan}\n\n"
+                f"🔄 Log ({iters} iteraciones):\n{log_text}\n\n"
+                f"✅ Resultado:\n{response}"
+            )
+        except Exception as e:
+            return f"Error en agente: {e}"
 
     return f"Tool desconocida: {name}"
 

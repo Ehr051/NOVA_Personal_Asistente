@@ -905,16 +905,26 @@ class NovaRouter:
             t["function"]["name"] for t in tools if t.get("function")
         )
 
+        # ── Cargar contexto de memoria neuronal ──────────────────────────────
+        mem_ctx = ""
+        try:
+            from nova.tools.nova_neuro_memory import neuro_memory
+            if neuro_memory is not None:
+                mem_ctx = neuro_memory.search_context(goal, limit=4) or ""
+        except Exception:
+            pass
+
         # ── PHASE 1: PLAN ────────────────────────────────────────────────────
+        plan_sys = (
+            "Eres Nova, asistente IA personal. "
+            "Antes de ejecutar cualquier acción, creá un plan numerado claro. "
+            "Muestra el plan completo. Luego lo ejecutarás paso a paso."
+        )
+        if mem_ctx:
+            plan_sys += f"\n\nContexto de memoria relevante:\n{mem_ctx}"
+
         plan_msgs = [
-            {
-                "role": "system",
-                "content": (
-                    "Eres Nova, asistente IA personal. "
-                    "Antes de ejecutar cualquier acción, creá un plan numerado claro. "
-                    "Muestra el plan completo. Luego lo ejecutarás paso a paso."
-                ),
-            },
+            {"role": "system", "content": plan_sys},
             {
                 "role": "user",
                 "content": (
@@ -925,12 +935,16 @@ class NovaRouter:
             },
         ]
         try:
-            plan_result = self.route(plan_msgs, force_tier=force_tier, max_tokens=400, temperature=0.3)
-            plan_text = plan_result.get("response", "")
+            _cb("\n📋 Plan:\n")
+            plan_chunks: list[str] = []
+            for _chunk in self.route_stream(plan_msgs, force_tier=force_tier, max_tokens=400, temperature=0.3):
+                _cb(_chunk)
+                plan_chunks.append(_chunk)
+            plan_text = "".join(plan_chunks)
+            _cb("\n")
         except Exception:
             plan_text = "(no se pudo generar un plan previo)"
-
-        _cb(f"\n📋 Plan:\n{plan_text}\n")
+            _cb(f"\n📋 Plan:\n{plan_text}\n")
 
         # ── PHASE 2: EXECUTE ─────────────────────────────────────────────────
         exec_messages: list[dict] = [
@@ -991,11 +1005,15 @@ class NovaRouter:
                 return {"response": final, "plan": plan_text, "iters": iteration + 1}
 
         # ── PHASE 3: SYNTH ───────────────────────────────────────────────────
-        _cb("\n🔄 Sintetizando resultados...")
+        _cb("\n🔄 Sintetizando resultados...\n")
         exec_messages.append({"role": "user", "content": "Resumí en 2-3 oraciones qué hiciste y el resultado."})
         try:
-            synth = self.route(exec_messages, force_tier=force_tier, max_tokens=300)
-            final = synth.get("response", "Tarea completada.")
+            synth_chunks: list[str] = []
+            for _chunk in self.route_stream(exec_messages, force_tier=force_tier, max_tokens=300):
+                _cb(_chunk)
+                synth_chunks.append(_chunk)
+            final = "".join(synth_chunks)
+            _cb("\n")
         except Exception:
             final = "Tarea completada."
         return {"response": final, "plan": plan_text, "iters": max_iter}
