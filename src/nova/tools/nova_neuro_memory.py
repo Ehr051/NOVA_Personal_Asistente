@@ -17,6 +17,19 @@ except ImportError:
         def from_config(config):
             return None
 
+# SQLite cross-thread safety: QdrantClient.__del__ gets called from the GC
+# thread which differs from the thread that opened the SQLite connection,
+# causing "SQLite objects created in a thread can only be used in that same
+# thread" errors on shutdown. Silencing __del__ is safe because close() is
+# called explicitly by NovaNeuralMemory.close() before the object is released.
+try:
+    from qdrant_client import QdrantClient as _QdrantClient
+    if not getattr(_QdrantClient, "_nova_del_patched", False):
+        _QdrantClient.__del__ = lambda self: None
+        _QdrantClient._nova_del_patched = True
+except Exception:
+    pass
+
 
 def _pick_ollama_memory_model() -> str:
     """Elige el modelo Ollama más liviano disponible para mem0."""
