@@ -66,9 +66,11 @@ Con al menos una key Nova ya funciona. Ollama es opcional pero habilita modo com
 
 - **Control por voz** — wake word "Nova", barge-in para interrumpir, enrollado de speaker personalizado
 - **Streaming token a token** — el REPL imprime la respuesta en tiempo real, como ChatGPT
-- **Daemon multi-sesión** — proceso central TCP (puerto 7899) que arranca automáticamente; REPL y HUD se conectan como clientes, eliminando conflictos de Qdrant
+- **Daemon multi-sesión** — proceso central TCP (puerto 7899) que arranca automáticamente; REPL y HUD se conectan como clientes, eliminando conflictos de Qdrant; soporta `agent_stream` para agentic loop vía socket
 - **Visión** — analiza cámara y pantalla vía Ollama local o OpenRouter como fallback
 - **Agente autónomo** — `route_agentic()`: planifica, ejecuta tools en loop (Plan→Execute→Verify) y muestra el proceso en tiempo real, como Devin/Claude Code
+- **Web UI** — interfaz HTML/SSE en `localhost:8080` sin dependencias extra; modos Chat y Agente, streaming token a token, progress del agentic loop en tiempo real (`/webui` para activar)
+- **Plugin system** — agrega skills sin tocar el core: copiá `nova_plugin_tunombre.py` a `~/.nova/plugins/` con `INTENTS`, `TOOL_CATALOG` y un hook opcional `register(skills_module)`
 - **185 agentes especializados** — Firmware Engineer, Software Architect, AI Engineer, Backend Architect y más, ejecutados con proveedores gratuitos
 - **Modelado 3D en Blender** — genera scripts Python, los envía al addon MCP y auto-evalúa el resultado con visión
 - **Memoria neuronal persistente** — Mem0 + Qdrant + embeddings locales
@@ -104,6 +106,7 @@ nova> modo agente: analizá el repositorio y proponé 3 mejoras
 /memoria       Ver memorias guardadas
 /silencio      Alternar modo silencioso (sin TTS)
 /reiniciar     Recargar módulos en caliente
+/webui         Abrir interfaz web en localhost:8080
 /ayuda         Lista completa de comandos
 ```
 
@@ -123,22 +126,28 @@ nova> modo agente: analizá el repositorio y proponé 3 mejoras
 
 ```
 src/nova/
-├── cli/repl.py                  REPL principal (streaming token a token, /agente agentic loop)
+├── cli/repl.py                  REPL principal (streaming, /agente, /webui)
 ├── core/
 │   ├── nova_router.py           Router: Ollama → Groq → Cerebras → Mistral → OpenRouter
 │   │                            + route_agentic() (Plan→Execute→Verify) + _call_with_tools()
 │   ├── nova_daemon.py           Daemon TCP (puerto 7899) — singleton router + Qdrant
-│   └── nova_client.py           Cliente thin: chat(), chat_stream(), ping(), ensure_daemon()
+│   │                            soporta chat_stream y agent_stream (ndjson)
+│   └── nova_client.py           Cliente thin: chat(), chat_stream(), agent_stream(), ping()
 ├── lang/novaesp.py              HUD + loop de voz
 ├── platform/                   Adaptadores por OS (macOS / Windows / Linux)
 ├── connectors/
 │   ├── nova_blender.py          Blender MCP + auto-evaluación con visión
 │   ├── nova_specialist.py       185 agentes especializados (diff+confirm ON by default)
 │   └── nova_vision.py           Visión: cámara y pantalla
+├── web/
+│   └── nova_web_server.py       Web UI — ThreadingHTTPServer + SSE streaming en localhost:8080
 └── tools/
     ├── nova_skills.py           100+ skills · execute_tool() · skill_agente()
-    ├── nova_tools_schemas.py    Auto-genera 48 JSON schemas OpenAI-compatible desde _TOOL_CATALOG
+    ├── nova_tools_schemas.py    Auto-genera JSON schemas OpenAI-compatible desde _TOOL_CATALOG
+    ├── nova_plugin_loader.py    Plugin system — carga nova_plugin_*.py desde ~/.nova/plugins/
     └── nova_neuro_memory.py     Mem0 + Qdrant + embeddings locales
+plugins/
+└── nova_plugin_example.py       Plantilla de plugin lista para copiar y adaptar
 ```
 
 ### Variables de entorno opcionales

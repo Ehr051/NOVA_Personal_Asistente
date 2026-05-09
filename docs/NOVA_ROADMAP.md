@@ -1,6 +1,6 @@
 # Nova — Estado del Proyecto y Roadmap
 > **Archivo único de contexto.** Cualquier agente que tome este proyecto lee esto primero.  
-> Última actualización: **2026-05-08 (sesión 7)**
+> Última actualización: **2026-05-08 (sesión 8)**
 
 ---
 
@@ -14,14 +14,14 @@ Docker/Deploy    ████████████████████ 10
 HUD              ████████████████░░░░  80%  (falta modo pantalla completa)
 Tests            ████████████░░░░░░░░  60%  (faltan más smoke tests)
 LSP semántico    ████████████████████ 100%  (jedi completo)
-Logging          ███████████████████░  95%  (~20 prints debug en novaesp.py)
+Logging          ████████████████████ 100%  (novaesp.py limpio)
 Telegram full    ████████████████████ 100%  (polling + webhook n8n)
 OCR/Documentos   ████████████████████ 100%  (markitdown + pytesseract)
 Modo políglota   ████████████████████ 100%  (explícito: ES/EN/FR/PT/DE/RU/ZH)
 Cross-platform   ████████░░░░░░░░░░░░  40%  (installer .venv + uninstall)
 Streaming LLM    ████████████████████ 100%  (REPL + daemon, token-by-token)
 Tool calling     ████████████████████ 100%  (OpenAI JSON schema, 48 tools, agentic loop)
-Plugins/Web UI   ░░░░░░░░░░░░░░░░░░░░   0%
+Plugins/Web UI   ████████████████████ 100%  (plugin loader + Web UI SSE)
 Daemon           ████████████████████ 100%  (TCP 7899, auto-launch, streaming)
 ```
 
@@ -94,10 +94,10 @@ Daemon           ████████████████████ 10
 | REPL CLI | `src/nova/cli/repl.py` | ✅ |
 | LSP semántico | `src/nova/connectors/nova_lsp.py` | ✅ |
 | Telegram Receive | `src/nova/connectors/nova_telegram_server.py` | ✅ |
-| Plugin system | — | ❌ pendiente |
-| Web UI | — | ❌ pendiente |
+| Plugin system | `src/nova/tools/nova_plugin_loader.py` | ✅ |
+| Web UI | `src/nova/web/nova_web_server.py` | ✅ |
 | Daemon/multi-sesión | `src/nova/core/nova_daemon.py` + `nova_client.py` | ✅ |
-| Streaming LLM | `nova_router.route_stream()` + daemon `chat_stream` | ✅ |
+| Streaming LLM | `nova_router.route_stream()` + daemon `chat_stream` + `agent_stream` | ✅ |
 | .venv + uninstall | `install.py` | ✅ |
 | Tool calling nativo | `nova_tools_schemas.py` + `nova_router._call_with_tools()` | ✅ |
 | Agentic loop | `nova_router.route_agentic()` Plan→Execute→Verify | ✅ |
@@ -118,6 +118,15 @@ Daemon           ████████████████████ 10
 | — | **Modo políglota** | ✅ `_SESSION_LANG` explícito (usuario activa), ES/EN/FR/PT/DE/RU/ZH, TTS con voz del idioma |
 | — | **Memoria/RAG** | ✅ `nova_rag_obsidian.py` → `legacy/`; vault completo en contexto (todas las carpetas) |
 | — | **Requirements + CI** | ✅ `requirements.txt` completo, `install.py` cross-platform, GitHub Actions release por tag |
+
+### ✅ Completado (sesión 8)
+
+| # | Feature | Estado |
+|---|---|---|
+| — | **Web UI** | ✅ `nova_web_server.py`: ThreadingHTTPServer + SPA dark-theme, modos Chat y Agente, SSE streaming real-time. `/webui` en REPL. |
+| — | **Plugin system** | ✅ `nova_plugin_loader.py`: carga `nova_plugin_*.py` desde `~/.nova/plugins/`. `INTENTS`, `TOOL_CATALOG`, `register()`. Plantilla en `plugins/`. |
+| — | **Daemon `agent_stream`** | ✅ Tipo nuevo en protocolo TCP ndjson: agentic loop streameable desde cualquier cliente socket. |
+| — | **Logging novaesp.py** | ✅ `print()` internos de diagnóstico migrados a `log.warning/info/debug`. |
 
 ### ✅ Completado (sesión 7)
 
@@ -150,15 +159,13 @@ Daemon           ████████████████████ 10
 
 | # | Feature | Qué hay que hacer |
 |---|---|---|
-| — | **Logging novaesp.py** | ~20 `print()` de debug/status sin migrar. Los de "Auxiliar:" / "Tú:" son UI intencional — se quedan. |
-| — | **Plugin system** | `nova_plugin_*.py` con `PLUGIN_META` dict + `register(skills_module)`. Carga automática al arrancar. Permite añadir skills sin tocar el core. |
+| — | **Tests suite ampliada** | Smoke tests para Web UI, plugin loader, daemon agent_stream, políglota. |
 
 ### 🟢 Baja prioridad
 
 | # | Feature | Qué hay que hacer |
 |---|---|---|
 | 10 | **Windows/Linux** | `src/nova/platform/` con `macos.py`, `windows.py`, `linux.py` + `adapter.py`. ~2-3 días. |
-| 11b | **Nova Web UI** | REPL web en localhost. Historial, panel de skills, estado de memoria. Complementa voz. |
 | 13 | **GitHub público** | README + video demo 2min + badges. (GitHub Actions ya hecho) |
 
 ---
@@ -187,6 +194,8 @@ Daemon           ████████████████████ 10
 | LSP semántico | ✅ | ✅ | ✅ | ✅ |
 | Multi-sesión / daemon | ✅ | ✅ | ✅ | ✅ auto-launch + streaming |
 | Tool calling nativo | ✅ | parcial | ✗ | ✅ 48 tools, agentic loop |
+| Web UI browser | ✅ | ✅ | ✅ | ✅ SSE streaming, Chat + Agente |
+| Plugin system | ✅ | ✅ | ✅ | ✅ `~/.nova/plugins/` sin tocar core |
 
 ---
 
