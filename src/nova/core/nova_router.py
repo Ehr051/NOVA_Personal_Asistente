@@ -57,6 +57,56 @@ except ImportError:
 
 load_dotenv()
 
+# ─── RATE LIMIT HELPERS ──────────────────────────────────────────────────────
+
+_RATE_LIMIT_MAX_WAIT = 30  # nunca esperar más de 30s por un solo proveedor
+
+def _parse_retry_after(exc: Exception) -> float | None:
+    """
+    Extrae el tiempo de espera de un error 429.
+    Soporta:
+      - openai.RateLimitError con response.headers["retry-after"]
+      - HTTPStatusError / RateLimitError de otros SDKs
+      - Errores cuyo str() contiene 'retry after N' o 'please try again in Xs'
+    Retorna segundos (float) o None si no es un 429 / no tiene retry-after.
+    """
+    import re as _re
+    exc_str = str(exc).lower()
+
+    # Detectar que es realmente un rate-limit
+    is_rate_limit = (
+        "429" in exc_str
+        or "rate limit" in exc_str
+        or "too many requests" in exc_str
+        or "rateLimitError" in type(exc).__name__
+    )
+    if not is_rate_limit:
+        return None
+
+    # 1. Intentar leer el header retry-after del SDK de openai
+    try:
+        headers = exc.response.headers  # type: ignore[attr-defined]
+        val = headers.get("retry-after") or headers.get("x-ratelimit-reset-requests")
+        if val:
+            return float(val)
+    except Exception:
+        pass
+
+    # 2. Parsear "please try again in 1.5s" / "retry after 2s" en el mensaje
+    for pattern in (
+        r"try again in\s+([\d.]+)\s*s",
+        r"retry after\s+([\d.]+)\s*s",
+        r"retry_after[\":\s]+([\d.]+)",
+        r"reset in\s+([\d.]+)\s*s",
+    ):
+        m = _re.search(pattern, exc_str)
+        if m:
+            return float(m.group(1))
+
+    # 3. Valor por defecto conservador para 429 sin tiempo explícito
+    return 5.0
+
+
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT_DEFAULT = (
@@ -745,6 +795,22 @@ class NovaRouter:
                     self._last_provider = provider
                     return
             except Exception as exc:
+                wait = _parse_retry_after(exc)
+                if wait and wait <= _RATE_LIMIT_MAX_WAIT:
+                    logger.debug("[rate-limit/stream] %s/%s: esperando %.1fs", provider, model, wait)
+                    time.sleep(wait)
+                    try:
+                        started = False
+                        for chunk in self._call_stream(client, provider, model,
+                                                       full_messages, max_tokens, temperature,
+                                                       extra_headers or None):
+                            started = True
+                            yield chunk
+                        if started:
+                            self._last_provider = provider
+                            return
+                    except Exception:
+                        pass
                 logger.debug("[Stream] %s/%s falló: %s", provider, model, str(exc)[:80])
 
         # Fallback: ningún proveedor acepta stream → respuesta completa en un yield
@@ -1513,7 +1579,36 @@ class NovaRouter:
             except Exception as exc:
                 latency = time.time() - start_time
                 self.stats_tracker.record_fail(attempt["billing_model"])
-                logger.debug("[fallback] %s/%s: %s", attempt['provider'], attempt['display_model'], str(exc)[:70])
+                exc_str = str(exc)
+                wait = _parse_retry_after(exc)
+                if wait and wait <= _RATE_LIMIT_MAX_WAIT:
+                    logger.debug("[rate-limit] %s/%s: esperando %.1fs",
+                                 attempt['provider'], attempt['display_model'], wait)
+                    time.sleep(wait)
+                    # Retry once after waiting
+                    try:
+                        start_time = time.time()
+                        if attempt["provider"] == "Anthropic":
+                            text, tokens = self._call_anthropic(
+                                model=attempt["model"], messages=messages,
+                                max_tokens=max_tokens, temperature=temperature,
+                            )
+                        else:
+                            text, tokens = self._call(
+                                client=attempt["client"], provider=attempt["provider"],
+                                model=attempt["model"], messages=messages,
+                                max_tokens=max_tokens, temperature=temperature,
+                                extra_headers=attempt["extra_headers"],
+                            )
+                        latency = time.time() - start_time
+                        self.stats_tracker.record_success(attempt["billing_model"], latency)
+                        return (text, tokens, attempt["display_model"],
+                                attempt["provider"], attempt["billing_model"])
+                    except Exception as exc2:
+                        exc_str = str(exc2)
+                        self.stats_tracker.record_fail(attempt["billing_model"])
+                logger.debug("[fallback] %s/%s: %s",
+                             attempt['provider'], attempt['display_model'], exc_str[:70])
                 last_error = exc
 
         raise RuntimeError(f"Todos los modelos fallaron. Último error: {last_error}")

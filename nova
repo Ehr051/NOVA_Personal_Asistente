@@ -152,8 +152,11 @@ Ejemplos de uso:
     _KNOWN_CMDS = {"ask", "chat", "skill", "agent", "config", "system", "daemon",
                    "-h", "--help"}
     _raw = sys.argv[1:]
-    if _raw and _raw[0] not in _KNOWN_CMDS and not _raw[0].startswith("-"):
-        return cmd_ask_oneshot(" ".join(_raw))
+    # Strip --json flag from raw args before treating as one-shot query
+    _json_mode = "--json" in _raw
+    _raw_clean = [a for a in _raw if a != "--json"]
+    if _raw_clean and _raw_clean[0] not in _KNOWN_CMDS and not _raw_clean[0].startswith("-"):
+        return cmd_ask_oneshot(" ".join(_raw_clean), json_output=_json_mode)
 
     args = parser.parse_args()
 
@@ -165,7 +168,8 @@ Ejemplos de uso:
     if args.command == 'ask':
         question_parts = getattr(args, 'question', None) or []
         text = " ".join(question_parts).strip() if question_parts else ""
-        return cmd_ask_oneshot(text or None)
+        _json_mode = "--json" in sys.argv
+        return cmd_ask_oneshot(text or None, json_output=_json_mode)
     elif args.command == 'chat':
         from nova.cli.repl import run as repl_run
         return repl_run()
@@ -253,15 +257,22 @@ def _silence_qdrant_del() -> None:
         pass
 
 
-def cmd_ask_oneshot(text: str | None) -> int:
+def cmd_ask_oneshot(text: str | None, json_output: bool = False) -> int:
     """
     Responde una pregunta y sale — sin REPL interactivo.
 
     Fuentes de input (en orden):
       1. `text` recibido como argumento
       2. stdin (pipe): `git diff | nova ask`
+
+    Con --json imprime:
+      {"response": "...", "provider": "...", "tokens": N, "source": "skill|llm"}
     """
     import sys as _sys
+    import time as _time
+    import json as _json
+
+    _t0 = _time.time()
 
     # Leer stdin si está siendo piped
     stdin_data = ""
@@ -276,7 +287,10 @@ def cmd_ask_oneshot(text: str | None) -> int:
     elif text:
         query = text
     else:
-        print("Uso: nova \"pregunta\"  o  cat archivo | nova ask")
+        if json_output:
+            print(_json.dumps({"error": "query vacía", "ok": False}))
+        else:
+            print("Uso: nova \"pregunta\"  o  cat archivo | nova ask")
         return 1
 
     _silence_qdrant_del()
@@ -292,9 +306,8 @@ def cmd_ask_oneshot(text: str | None) -> int:
     try:
         from nova.cli.repl import _expand_at_files
         query, _at_blocks = _expand_at_files(query)
-        if _at_blocks:
-            import sys as _s2
-            print(f"  [Leyendo {len(_at_blocks)} archivo(s)]", file=_s2.stderr)
+        if _at_blocks and not json_output:
+            print(f"  [Leyendo {len(_at_blocks)} archivo(s)]", file=_sys.stderr)
     except Exception:
         pass
 
@@ -304,7 +317,14 @@ def cmd_ask_oneshot(text: str | None) -> int:
             from nova.tools.nova_skills import dispatch as _dispatch
             result = _dispatch(query)
             if result:
-                print(result)
+                if json_output:
+                    print(_json.dumps({
+                        "ok": True, "response": result, "source": "skill",
+                        "provider": "local", "tokens": 0,
+                        "elapsed": round(_time.time() - _t0, 2),
+                    }))
+                else:
+                    print(result)
                 return 0
         except Exception:
             pass
@@ -314,14 +334,28 @@ def cmd_ask_oneshot(text: str | None) -> int:
     if _at_blocks:
         _sys_msg += "\n\n[Archivos de contexto]\n\n" + "\n\n".join(_at_blocks)
 
-    # 2. LLM (skills → daemon → router directo)
+    # 2. LLM via daemon (streaming) o router directo
+    _provider = "unknown"
+    _tokens = 0
+    _chunks: list[str] = []
+
     try:
         from nova.core.nova_client import NovaDaemonClient
         client = NovaDaemonClient(auto_start=False)
         if client.ping():
+            _provider = "daemon"
             for chunk in client.chat_stream(query, session="oneshot"):
-                print(chunk, end="", flush=True)
-            print()
+                _chunks.append(chunk)
+                if not json_output:
+                    print(chunk, end="", flush=True)
+            if not json_output:
+                print()
+            if json_output:
+                print(_json.dumps({
+                    "ok": True, "response": "".join(_chunks), "source": "llm",
+                    "provider": _provider, "tokens": _tokens,
+                    "elapsed": round(_time.time() - _t0, 2),
+                }))
             return 0
     except Exception:
         pass
@@ -330,15 +364,31 @@ def cmd_ask_oneshot(text: str | None) -> int:
     try:
         from nova.core.nova_router import NovaRouter
         router = NovaRouter()
-        for chunk in router.route_stream([
+        msgs = [
             {"role": "system", "content": _sys_msg},
-            {"role": "user", "content": query},
-        ]):
-            print(chunk, end="", flush=True)
-        print()
+            {"role": "user",   "content": query},
+        ]
+        if json_output:
+            # Collect full response for JSON output
+            result = router.route(msgs)
+            _provider = result.get("provider", "unknown")
+            _tokens   = result.get("tokens_used", 0)
+            print(_json.dumps({
+                "ok": True, "response": result.get("response", ""),
+                "source": "llm", "provider": _provider, "tokens": _tokens,
+                "model": result.get("model", ""),
+                "elapsed": round(_time.time() - _t0, 2),
+            }))
+        else:
+            for chunk in router.route_stream(msgs):
+                print(chunk, end="", flush=True)
+            print()
         return 0
     except Exception as e:
-        print(f"Error: {e}", file=_sys.stderr)
+        if json_output:
+            print(_json.dumps({"ok": False, "error": str(e)}))
+        else:
+            print(f"Error: {e}", file=_sys.stderr)
         return 1
 
 

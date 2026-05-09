@@ -960,6 +960,87 @@ def cmd_webui(arg: str) -> Optional[str]:
 
 
 # Comandos principales en español + aliases en inglés
+_CHECKPOINTS_DIR = os.path.expanduser("~/.nova/checkpoints")
+
+
+def cmd_checkpoint(arg: str) -> Optional[str]:
+    """
+    Guarda o restaura sesiones con nombre.
+
+    /checkpoint                  — listar checkpoints guardados
+    /checkpoint guardar <nombre> — guardar sesión actual con ese nombre
+    /checkpoint cargar <nombre>  — restaurar sesión guardada
+    /checkpoint borrar <nombre>  — eliminar checkpoint
+    """
+    import json as _j
+    from pathlib import Path
+
+    ck_dir = Path(_CHECKPOINTS_DIR)
+    ck_dir.mkdir(parents=True, exist_ok=True)
+
+    parts = arg.strip().split(maxsplit=1)
+    sub   = parts[0].lower() if parts else ""
+    name  = parts[1].strip() if len(parts) > 1 else ""
+
+    if sub in ("", "lista", "list", "ls"):
+        files = sorted(ck_dir.glob("*.json"))
+        if not files:
+            return "No hay checkpoints guardados. Usá: /checkpoint guardar <nombre>"
+        lines = ["Checkpoints guardados:\n"]
+        for f in files:
+            try:
+                data = _j.loads(f.read_text(encoding="utf-8"))
+                n_turns = len(data.get("history", [])) // 2
+                lines.append(f"  {f.stem:<20} {n_turns} turnos")
+            except Exception:
+                lines.append(f"  {f.stem}")
+        return "\n".join(lines)
+
+    if sub in ("guardar", "save", "crear"):
+        if not name:
+            return "Uso: /checkpoint guardar <nombre>"
+        hist = _session_state.get("history", [])
+        if not hist:
+            return "No hay historial para guardar."
+        data = {"id": name, "history": hist}
+        path = ck_dir / f"{name}.json"
+        path.write_text(_j.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return f"Sesión guardada como '{name}' ({len(hist)//2} turnos)."
+
+    if sub in ("cargar", "load", "restaurar"):
+        if not name:
+            return "Uso: /checkpoint cargar <nombre>"
+        path = ck_dir / f"{name}.json"
+        if not path.exists():
+            available = [f.stem for f in ck_dir.glob("*.json")]
+            hint = f" Disponibles: {', '.join(available)}" if available else ""
+            return f"Checkpoint '{name}' no encontrado.{hint}"
+        try:
+            data = _j.loads(path.read_text(encoding="utf-8"))
+            hist = data.get("history", [])
+            if not hist:
+                return f"Checkpoint '{name}' está vacío."
+            _session_state["history"] = hist
+            _session_state["id"] = name
+            return f"Sesión '{name}' restaurada ({len(hist)//2} turnos)."
+        except Exception as e:
+            return f"Error al cargar '{name}': {e}"
+
+    if sub in ("borrar", "delete", "eliminar"):
+        if not name:
+            return "Uso: /checkpoint borrar <nombre>"
+        path = ck_dir / f"{name}.json"
+        if not path.exists():
+            return f"Checkpoint '{name}' no encontrado."
+        path.unlink()
+        return f"Checkpoint '{name}' eliminado."
+
+    return (
+        f"Subcomando '{sub}' desconocido.\n"
+        "Uso: /checkpoint [lista|guardar <nombre>|cargar <nombre>|borrar <nombre>]"
+    )
+
+
 SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     # ── Principales (español) ──────────────────────────────────────────────────
     "/ayuda":     (cmd_help,        "Lista de comandos"),
@@ -987,8 +1068,10 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/exportar":  (cmd_exportar,    "Exportar sesión: /exportar [archivo.md|archivo.json]"),
     "/historial": (cmd_historial,   "Ver historial de la sesión: /historial [N turnos]"),
     "/rutina":    (cmd_rutina,      "Macros: /rutina definir <nombre> <cmd> ; <cmd>  ·  /rutina <nombre>"),
-    "/modo":      (cmd_modo,        "Modo de operación: /modo [normal|codigo|creativo|rapido|militar]"),
-    "/mode":      (cmd_modo,        "→ /modo"),
+    "/modo":       (cmd_modo,        "Modo de operación: /modo [normal|codigo|creativo|rapido|militar]"),
+    "/mode":       (cmd_modo,        "→ /modo"),
+    "/checkpoint": (cmd_checkpoint,  "Sesiones con nombre: /checkpoint [guardar|cargar|borrar|lista] <nombre>"),
+    "/ckpt":       (cmd_checkpoint,  "→ /checkpoint"),
     "/export":    (cmd_exportar,    "→ /exportar"),
     "/history":   (cmd_historial,   "→ /historial"),
     "/routine":   (cmd_rutina,      "→ /rutina"),

@@ -577,6 +577,7 @@ class NovaWebHandler(BaseHTTPRequestHandler):
     # ── Agent streaming ───────────────────────────────────────────────────────
 
     def _stream_agent(self, goal: str) -> None:
+        import queue as _queue
         _history.append({"role": "user", "content": f"[agente] {goal}"})
 
         if not _router:
@@ -584,24 +585,40 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             self._write_sse("[DONE]")
             return
 
-        result_holder: list[str] = []
+        # Run skill_agente in a worker thread so SSE can flush without blocking.
+        # Worker puts progress strings into the queue; sentinel None signals done.
+        _DONE = object()
+        q: _queue.Queue = _queue.Queue()
 
-        def _cb(msg: str) -> None:
-            self._write_sse(msg)
+        def _worker():
+            def _cb(msg: str) -> None:
+                q.put(msg)
+            try:
+                from nova.tools.nova_skills import skill_agente
+                final = skill_agente(goal, progress_cb=_cb)
+                q.put(f"\n✅ Resultado:\n{final}")
+                _history.append({"role": "assistant", "content": final})
+            except Exception as e:
+                q.put(f"[ERR]{e}")
+            finally:
+                q.put(_DONE)
 
-        try:
-            from nova.tools.nova_skills import skill_agente
-            final = skill_agente(goal, progress_cb=_cb)
-            result_holder.append(final)
-        except Exception as e:
-            self._write_sse(f"[ERR]{e}")
-            self._write_sse("[DONE]")
-            return
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
 
-        final = result_holder[0] if result_holder else ""
-        self._write_sse(f"\n✅ Resultado:\n{final}")
-        _history.append({"role": "assistant", "content": final})
+        while True:
+            try:
+                item = q.get(timeout=60)
+            except _queue.Empty:
+                self._write_sse("[ERR]Timeout del agente")
+                break
+            if item is _DONE:
+                break
+            if not self._write_sse(str(item)):
+                break  # client disconnected
+
         self._write_sse("[DONE]")
+        t.join(timeout=2)
 
 
 # ─── Server lifecycle ─────────────────────────────────────────────────────────
