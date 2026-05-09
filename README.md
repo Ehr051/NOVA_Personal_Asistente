@@ -1,5 +1,10 @@
 # Nova — Asistente Personal Inteligente
 
+[![Tests](https://github.com/Ehr051/NOVA_Personal_Asistente/actions/workflows/tests.yml/badge.svg)](https://github.com/Ehr051/NOVA_Personal_Asistente/actions/workflows/tests.yml)
+[![Release](https://img.shields.io/github/v/release/Ehr051/NOVA_Personal_Asistente)](https://github.com/Ehr051/NOVA_Personal_Asistente/releases/latest)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/github/license/Ehr051/NOVA_Personal_Asistente)](LICENSE)
+
 Nova es un asistente personal avanzado con control por voz, visión, memoria neuronal, automatización y agentes especializados. Funciona en **macOS, Windows y Linux**. Respuestas en streaming token a token, daemon multi-sesión, y completamente offline con Ollama.
 
 ---

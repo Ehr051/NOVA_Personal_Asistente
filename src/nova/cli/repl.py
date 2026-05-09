@@ -190,6 +190,7 @@ def cmd_exit(_: str) -> Optional[str]:
 def cmd_clear(_: str) -> Optional[str]:
     os.system("clear" if os.name != "nt" else "cls")
     _session_state["history"] = []
+    _session_save()
     return "Pantalla y contexto de sesión limpiados."
 
 
@@ -653,6 +654,51 @@ def cmd_modelo(arg: str) -> Optional[str]:
     return "No se pudo cambiar el orden de proveedores en este router."
 
 
+def cmd_exportar(arg: str) -> Optional[str]:
+    """Exporta la sesión actual a un archivo Markdown o JSON."""
+    history = _session_state.get("history", [])
+    if not history:
+        return "No hay conversación que exportar."
+
+    from pathlib import Path
+    import datetime as _dt
+
+    fmt   = "json" if "json" in arg.lower() else "md"
+    ts    = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    fname = arg.strip() if (arg.strip() and not arg.strip().startswith("-")) else f"nova_sesion_{ts}.{fmt}"
+    fpath = Path(fname) if Path(fname).is_absolute() else Path.cwd() / fname
+
+    if fmt == "json":
+        import json as _json
+        fpath.write_text(_json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        lines = [f"# Sesión Nova — {_dt.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
+        for turn in history:
+            role = "**Nova**" if turn["role"] == "assistant" else "**Tú**"
+            lines.append(f"{role}: {turn['content']}\n")
+        fpath.write_text("\n".join(lines), encoding="utf-8")
+
+    return f"Sesión exportada → {fpath}"
+
+
+def cmd_historial(arg: str) -> Optional[str]:
+    """Muestra el historial de la sesión actual."""
+    history = _session_state.get("history", [])
+    if not history:
+        return "No hay historial en esta sesión."
+    limit = 10
+    try:
+        limit = int(arg.strip())
+    except (ValueError, TypeError):
+        pass
+    lines = []
+    for turn in history[-limit * 2:]:
+        role  = "Tú  " if turn["role"] == "user" else "Nova"
+        body  = turn["content"].replace("\n", " ")
+        lines.append(f"  {role}: {body[:120]}{'…' if len(body) > 120 else ''}")
+    return f"Historial (últimas {limit} rondas):\n" + "\n".join(lines)
+
+
 def cmd_telegram(_: str) -> Optional[str]:
     """Muestra estado del servidor Telegram Receive."""
     try:
@@ -713,6 +759,10 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/reenroll":  (cmd_reenroll,    "Registrar perfil de voz (3 rondas guiadas, ~2 min)"),
     "/telegram":  (cmd_telegram,    "Estado del servidor Telegram Receive"),
     "/webui":     (cmd_webui,       "Interfaz web: /webui [start|stop|status]"),
+    "/exportar":  (cmd_exportar,    "Exportar sesión: /exportar [archivo.md|archivo.json]"),
+    "/historial": (cmd_historial,   "Ver historial de la sesión: /historial [N turnos]"),
+    "/export":    (cmd_exportar,    "→ /exportar"),
+    "/history":   (cmd_historial,   "→ /historial"),
     # ── Aliases inglés (para compatibilidad) ──────────────────────────────────
     "/help":      (cmd_help,        "→ /ayuda"),
     "/exit":      (cmd_exit,        "→ /salir"),
@@ -726,9 +776,44 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
 }
 
 
-# ─── Estado de sesión ────────────────────────────────────────────────────────
+# ─── Estado de sesión + persistencia ─────────────────────────────────────────
 
 _session_state: dict = {"history": [], "id": "repl"}
+
+_SESSION_FILE = os.path.expanduser("~/.nova/session_last.json")
+_SESSION_AUTOSAVE_EVERY = 3   # guardar cada N turnos (user+assistant = 1 turno)
+
+
+def _session_save() -> None:
+    """Guarda el historial actual en disco (silencioso si falla)."""
+    try:
+        import json as _j
+        from pathlib import Path
+        Path(_SESSION_FILE).parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "id":      _session_state.get("id", "repl"),
+            "history": _session_state.get("history", []),
+        }
+        Path(_SESSION_FILE).write_text(_j.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _session_load() -> bool:
+    """Carga la última sesión desde disco. Retorna True si se restauró algo."""
+    try:
+        import json as _j
+        from pathlib import Path
+        text = Path(_SESSION_FILE).read_text(encoding="utf-8")
+        data = _j.loads(text)
+        hist = data.get("history", [])
+        if hist:
+            _session_state["history"] = hist
+            _session_state["id"] = data.get("id", "repl")
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _dispatch_slash(line: str) -> Optional[str]:
@@ -845,11 +930,13 @@ def _route_to_llm(text: str) -> str:
     try:
         # Streaming: imprime tokens a medida que llegan
         response_chunks: list[str] = []
+        t0 = datetime.datetime.now()
         print()
         for chunk in _router.route_stream(messages):
             print(chunk, end="", flush=True)
             response_chunks.append(chunk)
         print()
+        elapsed = (datetime.datetime.now() - t0).total_seconds()
         response = "".join(response_chunks)
         provider = getattr(_router, "_last_provider", "?")
         history.append({"role": "assistant", "content": response})
@@ -861,7 +948,12 @@ def _route_to_llm(text: str) -> str:
             except Exception:
                 pass
 
-        print(f"  [via {provider}]")
+        # Auto-save de sesión cada N turnos
+        if len(history) % (_SESSION_AUTOSAVE_EVERY * 2) == 0:
+            _session_save()
+
+        tok_approx = len(response.split())
+        print(f"  [via {provider} · ~{tok_approx} tok · {elapsed:.1f}s]")
         return ""  # ya impreso token a token
     except Exception as e:
         return f"Error LLM: {e}"
@@ -944,7 +1036,7 @@ def _print_banner(ctx: dict) -> None:
     print(r"  ╚═╝  ╚═══╝ ╚═════╝   ╚═══╝  ╚═╝  ╚═╝")
     print(f"{c['reset']}")
     print(f"{c['dim']}{bar}{c['reset']}")
-    print(f"  {c['white']}{c['bold']}Nova Personal AI{c['reset']}  {c['dim']}v3.1{c['reset']}  "
+    print(f"  {c['white']}{c['bold']}Nova Personal AI{c['reset']}  {c['dim']}v3.8{c['reset']}  "
           f"{c['dim']}·{c['reset']}  {c['dim']}{now}{c['reset']}")
 
     if repo and branch:
@@ -969,13 +1061,20 @@ def run() -> int:
     except Exception:
         pass
 
+    # Restaurar última sesión (silencioso si no hay)
+    if _session_load():
+        n = len(_session_state["history"]) // 2
+        c = _ANSI
+        print(f"  {c['dim']}Sesión restaurada — {n} turno(s) en contexto  (/historial para ver · /limpiar para resetear){c['reset']}\n")
+
     read = _make_reader()
 
     while True:
         try:
             line = read("nova> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\n👋 Hasta luego, Señor.")
+            _session_save()
+            print("\nHasta luego, Señor.")
             return 0
 
         if not line:
