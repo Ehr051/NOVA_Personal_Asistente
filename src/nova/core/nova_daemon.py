@@ -220,6 +220,46 @@ class NovaDaemon:
         self._save_turn(history, message, response)
         yield {"ok": True, "done": True, "result": response, "skill": False}
 
+    def _handle_agent_stream(self, req: dict):
+        """Generator: yields ndjson progress lines + final done para el agentic loop."""
+        self._init_router()
+        self._init_memory()
+        if not self._router:
+            yield {"ok": False, "done": True, "error": "Router no disponible"}
+            return
+
+        goal = req.get("goal", "").strip()
+        if not goal:
+            yield {"ok": False, "done": True, "error": "goal vacío"}
+            return
+
+        import queue as _queue
+        q: _queue.Queue = _queue.Queue()
+        _DONE = object()
+
+        def _progress(msg: str) -> None:
+            m = msg.strip()
+            if m:
+                q.put({"ok": True, "chunk": m})
+
+        def _run() -> None:
+            try:
+                from nova.tools.nova_skills import skill_agente
+                result = skill_agente(goal, progress_cb=_progress)
+                q.put({"ok": True, "done": True, "result": result})
+            except Exception as exc:
+                q.put({"ok": False, "done": True, "error": str(exc)})
+            finally:
+                q.put(_DONE)
+
+        threading.Thread(target=_run, daemon=True, name="daemon-agente").start()
+
+        while True:
+            item = q.get()
+            if item is _DONE:
+                break
+            yield item
+
     def _handle_remember(self, req: dict) -> dict:
         self._init_memory()
         fact = req.get("fact", "").strip()
@@ -291,13 +331,22 @@ class NovaDaemon:
 
                 msg_type = req.get("type", "")
 
-                # chat_stream: protocolo multi-línea (N chunks + done)
+                # Protocolo multi-línea (N chunks + done)
                 if msg_type == "chat_stream":
                     try:
                         for obj in self._handle_chat_stream(req):
                             _send(conn, obj)
                     except Exception as e:
                         log.exception("[Daemon] Error en chat_stream")
+                        _send(conn, {"ok": False, "done": True, "error": str(e)})
+                    continue
+
+                if msg_type == "agent_stream":
+                    try:
+                        for obj in self._handle_agent_stream(req):
+                            _send(conn, obj)
+                    except Exception as e:
+                        log.exception("[Daemon] Error en agent_stream")
                         _send(conn, {"ok": False, "done": True, "error": str(e)})
                     continue
 

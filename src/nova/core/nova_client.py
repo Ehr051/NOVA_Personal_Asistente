@@ -130,6 +130,41 @@ class NovaDaemonClient:
             except OSError:
                 pass
 
+    def agent_stream(self, goal: str, session: str = "default"):
+        """
+        Generator: yields progress lines y resultado final del agentic loop.
+        Cada item es un str. Lanza DaemonUnavailable si el daemon no responde.
+        """
+        conn = self._connect()
+        try:
+            data = (json.dumps({"type": "agent_stream", "goal": goal,
+                                "session": session}, ensure_ascii=False) + "\n")
+            conn.sendall(data.encode("utf-8"))
+            buf = b""
+            while True:
+                chunk = conn.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if not line.strip():
+                        continue
+                    obj = json.loads(line.decode("utf-8", errors="replace"))
+                    if not obj.get("ok") and obj.get("error"):
+                        raise DaemonUnavailable(obj["error"])
+                    if obj.get("chunk"):
+                        yield obj["chunk"]
+                    if obj.get("done"):
+                        if obj.get("result"):
+                            yield obj["result"]
+                        return
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
     def remember(self, fact: str) -> None:
         self._request({"type": "remember", "fact": fact})
 
