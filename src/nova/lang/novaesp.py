@@ -116,6 +116,14 @@ def _load_all_speaker_profiles() -> None:
                         break
                     except Exception:
                         pass
+        # Detectar perfiles viejos (80-dim = incluían MFCC[0] = energía) → inválidos
+        stale = [uid for uid, vec in _ALL_SPEAKER_PROFILES.items() if vec.shape[0] == 80]
+        for uid in stale:
+            del _ALL_SPEAKER_PROFILES[uid]
+            log.warning(
+                "[Speaker] Perfil '%s' tiene formato antiguo (80-dim con MFCC[0]=energía). "
+                "Ejecutá /reenroll en la terminal para re-registrar tu voz.", uid)
+
         if _ALL_SPEAKER_PROFILES:
             _SPEAKER_VERIFY = True
             _SPEAKER_PROFILE = _ALL_SPEAKER_PROFILES.get("default")
@@ -149,7 +157,8 @@ def _identify_speaker(wav_bytes: bytes) -> "str | None":
         if len(y) < 16000 * 0.3:
             return None
         mfccs = librosa.feature.mfcc(y=y, sr=16000, n_mfcc=40)
-        feats = np.concatenate([mfccs.mean(axis=1), mfccs.std(axis=1)])
+        # Excluir coef 0 (energía — no discriminativo entre hablantes, genera falsos positivos)
+        feats = np.concatenate([mfccs[1:].mean(axis=1), mfccs[1:].std(axis=1)])
         norm = np.linalg.norm(feats)
         if norm == 0:
             return None
@@ -192,7 +201,7 @@ def _is_my_voice(wav_bytes: bytes) -> bool:
         if len(y) < 16000 * 0.3:
             return False
         mfccs = librosa.feature.mfcc(y=y, sr=16000, n_mfcc=40)
-        feats = np.concatenate([mfccs.mean(axis=1), mfccs.std(axis=1)])
+        feats = np.concatenate([mfccs[1:].mean(axis=1), mfccs[1:].std(axis=1)])
         norm  = np.linalg.norm(feats)
         if norm == 0:
             return False

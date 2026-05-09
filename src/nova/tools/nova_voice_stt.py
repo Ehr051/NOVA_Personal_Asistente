@@ -47,8 +47,9 @@ def _extract_features(wav_path: str) -> np.ndarray | None:
         if len(y) < SAMPLE_RATE * 0.3:   # menos de 0.3 s → ignorar
             return None
         mfccs  = librosa.feature.mfcc(y=y, sr=SAMPLE_RATE, n_mfcc=N_MFCC)
-        # Media + desviación estándar → vector de 80 dimensiones robusto
-        feats  = np.concatenate([mfccs.mean(axis=1), mfccs.std(axis=1)])
+        # Excluir coef 0 (energía total — no es discriminativo entre hablantes)
+        # Mean + std de coefs 1-39 → vector de 78 dimensiones
+        feats  = np.concatenate([mfccs[1:].mean(axis=1), mfccs[1:].std(axis=1)])
         norm   = np.linalg.norm(feats)
         return feats / norm if norm > 0 else feats
     except Exception as e:
@@ -63,7 +64,7 @@ def _extract_features_from_bytes(wav_bytes: bytes) -> np.ndarray | None:
         if len(y) < SAMPLE_RATE * 0.3:
             return None
         mfccs = librosa.feature.mfcc(y=y, sr=SAMPLE_RATE, n_mfcc=N_MFCC)
-        feats = np.concatenate([mfccs.mean(axis=1), mfccs.std(axis=1)])
+        feats = np.concatenate([mfccs[1:].mean(axis=1), mfccs[1:].std(axis=1)])
         norm  = np.linalg.norm(feats)
         return feats / norm if norm > 0 else feats
     except Exception:
