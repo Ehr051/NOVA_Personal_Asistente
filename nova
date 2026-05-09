@@ -22,9 +22,15 @@ for _noisy in ("httpx", "httpcore", "openai", "groq", "anthropic",
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 def main():
+    try:
+        import sys as _s; _s.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+        from nova import __version__ as _nova_ver
+    except Exception:
+        _nova_ver = "3.9"
+
     parser = argparse.ArgumentParser(
         prog="nova",
-        description="Nova Personal Assistant - CLI para gestionar skills, agents y configuración",
+        description=f"Nova Personal Assistant v{_nova_ver} — CLI para gestionar skills, agents y configuración",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Ejemplos de uso:
@@ -39,6 +45,7 @@ Ejemplos de uso:
         """
     )
     
+    parser.add_argument("--version", "-V", action="version", version=f"nova {_nova_ver}")
     subparsers = parser.add_subparsers(dest='command', help='Comandos disponibles')
 
     # ========== ONE-SHOT / STDIN ==========

@@ -81,6 +81,10 @@ Con al menos una key Nova ya funciona. Ollama es opcional pero habilita modo com
 - **Memoria neuronal persistente** — Mem0 + Qdrant + embeddings locales
 - **Cerebro/Obsidian** — búsqueda y escritura en vault `~/Cerebro/` via REST API
 - **Automatización** — Google Calendar, Gmail, Drive, n8n, Telegram, volumen, apps, mouse/teclado
+- **Rate limit retry inteligente** — detecta 429, parsea `retry-after`, espera y reintenta automáticamente antes de pasar al siguiente provider
+- **One-shot JSON** — `nova "query" --json` devuelve `{"response":"...","provider":"...","elapsed":N}` para scripts y pipelines
+- **Modos custom** — `normal/codigo/creativo/rapido` built-in + perfiles propios en `~/.nova/modos/<nombre>.json` (`/modo nuevo <nombre>`)
+- **Sesiones con nombre** — `/checkpoint guardar <nombre>` / `cargar` / `borrar` para persistir conversaciones
 - **Skills sin API key** — traducción, crypto, tipo de cambio, feriados
 - **Cross-platform** — macOS, Windows 10+, Linux
 - **`.venv` aislado** — `install.py` crea un entorno virtual dedicado; los paquetes de Nova no afectan el sistema
@@ -101,6 +105,12 @@ nova> modela un tornillo hexagonal M6 en Blender
 nova> recuerda que prefiero Python sobre JavaScript
 nova> /agente buscá el precio de bitcoin y guardalo en una nota del Cerebro
 nova> modo agente: analizá el repositorio y proponé 3 mejoras
+
+# One-shot desde terminal (sin abrir REPL)
+$ nova "qué hora es"
+$ nova "resumí @README.md en 3 puntos"
+$ git diff | nova ask "explicá estos cambios"
+$ nova "cuánto vale bitcoin" --json | jq .response
 ```
 
 ### Comandos del sistema
@@ -112,6 +122,11 @@ nova> modo agente: analizá el repositorio y proponé 3 mejoras
 /silencio      Alternar modo silencioso (sin TTS)
 /reiniciar     Recargar módulos en caliente
 /webui         Abrir interfaz web en localhost:8080
+/modo          Cambiar modo: /modo codigo · /modo nuevo <nombre>
+/checkpoint    Sesiones: /checkpoint guardar <nombre> · cargar · lista
+/nota          Captura rápida al Cerebro
+/comparar      Comparar respuestas de múltiples LLMs en paralelo
+/rutina        Macros: /rutina definir <nombre> cmd1 ; cmd2
 /ayuda         Lista completa de comandos
 ```
 
@@ -167,4 +182,4 @@ plugins/
 
 ---
 
-*Versión 3.8 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*
+*Versión 3.9 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*

@@ -291,3 +291,90 @@ def test_checkpoint_in_slash_commands():
     from nova.cli.repl import SLASH_COMMANDS
     assert "/checkpoint" in SLASH_COMMANDS
     assert "/ckpt" in SLASH_COMMANDS
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 5. Modos custom
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_modo_lista_shows_builtin():
+    from nova.cli.repl import cmd_modo, _MODOS_BUILTIN
+    result = cmd_modo("")
+    for name in _MODOS_BUILTIN:
+        assert name in result
+
+
+def test_modo_builtin_militar_removed():
+    from nova.cli.repl import _MODOS_BUILTIN
+    assert "militar" not in _MODOS_BUILTIN
+
+
+def test_modo_nuevo_creates_file(tmp_path, monkeypatch):
+    import nova.cli.repl as repl
+    monkeypatch.setattr(repl, "_MODOS_DIR", str(tmp_path / "modos"))
+    result = repl.cmd_modo("nuevo testmode Modo de prueba para testing")
+    assert "testmode" in result
+    assert (tmp_path / "modos" / "testmode.json").exists()
+    # Debe quedar en _MODOS
+    assert "testmode" in repl._MODOS
+
+
+def test_modo_nuevo_cant_overwrite_builtin(tmp_path, monkeypatch):
+    import nova.cli.repl as repl
+    monkeypatch.setattr(repl, "_MODOS_DIR", str(tmp_path / "modos"))
+    result = repl.cmd_modo("nuevo codigo intento de sobrescribir")
+    assert "built-in" in result.lower()
+
+
+def test_modo_borrar_custom(tmp_path, monkeypatch):
+    import json
+    import nova.cli.repl as repl
+    monkeypatch.setattr(repl, "_MODOS_DIR", str(tmp_path / "modos"))
+    # Create manually
+    mdir = tmp_path / "modos"
+    mdir.mkdir()
+    cfg = {"desc": "test", "temp": 0.5, "tier": None, "extra": ""}
+    (mdir / "paraborrrar.json").write_text(json.dumps(cfg), encoding="utf-8")
+    repl._MODOS["paraborrrar"] = {**cfg, "_custom": True}
+    result = repl.cmd_modo("borrar paraborrrar")
+    assert "eliminado" in result.lower()
+    assert "paraborrrar" not in repl._MODOS
+
+
+def test_modo_borrar_builtin_rejected(tmp_path, monkeypatch):
+    import nova.cli.repl as repl
+    monkeypatch.setattr(repl, "_MODOS_DIR", str(tmp_path / "modos"))
+    result = repl.cmd_modo("borrar normal")
+    assert "built-in" in result.lower()
+
+
+def test_modo_exportar(tmp_path, monkeypatch):
+    import nova.cli.repl as repl
+    monkeypatch.setattr(repl, "_MODOS_DIR", str(tmp_path / "modos"))
+    result = repl.cmd_modo("exportar codigo")
+    assert "codigo" in result
+    assert '"temp"' in result or "temp" in result
+
+
+def test_modo_custom_loaded_from_dir(tmp_path, monkeypatch):
+    import json
+    import nova.cli.repl as repl
+    mdir = tmp_path / "modos"
+    mdir.mkdir()
+    cfg = {"desc": "Mi modo personal", "temp": 0.4, "tier": 2, "extra": "Instrucciones custom"}
+    (mdir / "personal.json").write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setattr(repl, "_MODOS_DIR", str(mdir))
+    repl._load_custom_modos()
+    assert "personal" in repl._MODOS
+    assert repl._MODOS["personal"]["desc"] == "Mi modo personal"
+
+
+def test_nova_version():
+    """nova --version debe mostrar un número de versión."""
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "nova"), "--version"],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 0
+    assert "nova" in result.stdout.lower() or "3." in result.stdout

@@ -655,8 +655,10 @@ def cmd_modelo(arg: str) -> Optional[str]:
 
 
 _MODO_ACTUAL: str = "normal"
+_MODOS_DIR = os.path.expanduser("~/.nova/modos")
 
-_MODOS: dict[str, dict] = {
+# Modos built-in universales (sin perfiles personales hardcodeados)
+_MODOS_BUILTIN: dict[str, dict] = {
     "normal": {
         "desc":  "Modo estándar — balanceado",
         "temp":  0.7,
@@ -681,33 +683,146 @@ _MODOS: dict[str, dict] = {
         "tier":  0,
         "extra": "Respuestas muy concisas — una oración o menos si es posible.",
     },
-    "militar": {
-        "desc":  "Modo militar — terminología táctica, respuestas estructuradas",
-        "temp":  0.3,
-        "tier":  2,
-        "extra": "Sos un asesor de operaciones militares. Usá terminología táctica estándar, estructuras claras y brevedad. Sin eufemismos.",
-    },
 }
+
+# _MODOS es la vista combinada (built-in + custom cargados al inicio)
+_MODOS: dict[str, dict] = dict(_MODOS_BUILTIN)
+
+
+def _load_custom_modos() -> None:
+    """Carga perfiles JSON de ~/.nova/modos/ y los fusiona con _MODOS."""
+    import json as _j
+    from pathlib import Path
+    modos_dir = Path(_MODOS_DIR)
+    if not modos_dir.exists():
+        return
+    for f in modos_dir.glob("*.json"):
+        try:
+            data = _j.loads(f.read_text(encoding="utf-8"))
+            name = f.stem.lower()
+            _MODOS[name] = {
+                "desc":  data.get("desc", data.get("descripcion", f"Modo personalizado: {name}")),
+                "temp":  data.get("temp", data.get("temperatura", 0.7)),
+                "tier":  data.get("tier", None),
+                "extra": data.get("extra", data.get("system_extra", "")),
+                "_custom": True,
+            }
+        except Exception:
+            pass
+
+
+_load_custom_modos()
 
 
 def cmd_modo(arg: str) -> Optional[str]:
-    """Cambia el modo de operación: /modo [normal|codigo|creativo|rapido|militar]"""
+    """
+    Cambia el modo de operación o gestiona modos personalizados.
+
+    /modo                         — modo actual y lista
+    /modo <nombre>                — cambiar al modo indicado
+    /modo nuevo <nombre> [desc]   — crear modo personalizado (interactivo)
+    /modo borrar <nombre>         — eliminar modo custom
+    /modo exportar <nombre>       — mostrar JSON del modo para compartir
+    """
+    import json as _j
+    from pathlib import Path
     global _MODO_ACTUAL
-    modo = arg.strip().lower()
-    if not modo or modo in ("lista", "list", "?"):
-        lines = [f"Modo actual: {_MODO_ACTUAL}\n\nModos disponibles:"]
-        for k, v in _MODOS.items():
+
+    parts = arg.strip().split(maxsplit=1)
+    sub   = parts[0].lower() if parts else ""
+    rest  = parts[1].strip() if len(parts) > 1 else ""
+
+    # ── lista / vacío ────────────────────────────────────────────────────────
+    if not sub or sub in ("lista", "list", "?"):
+        lines = [f"Modo actual: {_MODO_ACTUAL}\n"]
+        builtin_names = set(_MODOS_BUILTIN)
+        custom = {k: v for k, v in _MODOS.items() if k not in builtin_names}
+        lines.append("Modos built-in:")
+        for k, v in _MODOS_BUILTIN.items():
             mark = " ◀" if k == _MODO_ACTUAL else ""
-            lines.append(f"  {k:<12} — {v['desc']}{mark}")
+            lines.append(f"  {k:<14} — {v['desc']}{mark}")
+        if custom:
+            lines.append("\nModos personalizados (~/.nova/modos/):")
+            for k, v in custom.items():
+                mark = " ◀" if k == _MODO_ACTUAL else ""
+                lines.append(f"  {k:<14} — {v['desc']}{mark}")
+        lines.append("\nCrear modo: /modo nuevo <nombre>")
         return "\n".join(lines)
+
+    # ── nuevo ────────────────────────────────────────────────────────────────
+    if sub == "nuevo":
+        name = rest.split()[0].lower() if rest else ""
+        if not name:
+            return "Uso: /modo nuevo <nombre>  (luego Nova te pregunta los parámetros)"
+        if name in _MODOS_BUILTIN:
+            return f"'{name}' es un modo built-in y no se puede sobreescribir."
+
+        # Defaults razonables — el usuario puede editar el JSON después
+        desc_hint = " ".join(rest.split()[1:]) or f"Modo personalizado {name}"
+        nuevo = {
+            "desc":  desc_hint,
+            "temp":  0.7,
+            "tier":  None,
+            "extra": f"Instrucciones de sistema para el modo {name}. Editá ~/.nova/modos/{name}.json para personalizar.",
+        }
+        modos_dir = Path(_MODOS_DIR)
+        modos_dir.mkdir(parents=True, exist_ok=True)
+        path = modos_dir / f"{name}.json"
+        path.write_text(_j.dumps(nuevo, ensure_ascii=False, indent=2), encoding="utf-8")
+        _MODOS[name] = {**nuevo, "_custom": True}
+        return (
+            f"Modo '{name}' creado.\n"
+            f"Editá {path} para ajustar temperatura, tier y system_extra.\n"
+            f"Formato JSON:\n"
+            f'  {{"desc":"...","temp":0.7,"tier":null,"extra":"instrucciones de sistema"}}\n'
+            f"Activar: /modo {name}"
+        )
+
+    # ── borrar ───────────────────────────────────────────────────────────────
+    if sub in ("borrar", "delete", "eliminar"):
+        name = rest.strip().lower()
+        if not name:
+            return "Uso: /modo borrar <nombre>"
+        if name in _MODOS_BUILTIN:
+            return f"'{name}' es un modo built-in y no se puede borrar."
+        path = Path(_MODOS_DIR) / f"{name}.json"
+        if not path.exists():
+            return f"Modo '{name}' no encontrado en ~/.nova/modos/"
+        path.unlink()
+        _MODOS.pop(name, None)
+        if _MODO_ACTUAL == name:
+            _MODO_ACTUAL = "normal"
+        return f"Modo '{name}' eliminado."
+
+    # ── exportar ─────────────────────────────────────────────────────────────
+    if sub in ("exportar", "export"):
+        name = rest.strip().lower()
+        if not name:
+            name = _MODO_ACTUAL
+        if name not in _MODOS:
+            return f"Modo '{name}' no encontrado."
+        cfg = {k: v for k, v in _MODOS[name].items() if not k.startswith("_")}
+        return f"# Modo '{name}' — guardá esto en ~/.nova/modos/{name}.json\n{_j.dumps(cfg, ensure_ascii=False, indent=2)}"
+
+    # ── cambiar modo ─────────────────────────────────────────────────────────
+    modo = sub  # sub ya es el nombre en minúsculas
     if modo not in _MODOS:
-        return f"Modo '{modo}' desconocido. Opciones: {', '.join(_MODOS)}"
+        # Intentar recargar custom por si se agregó desde afuera
+        _load_custom_modos()
+    if modo not in _MODOS:
+        custom_names = [k for k in _MODOS if k not in _MODOS_BUILTIN]
+        hint = f"  Custom: {', '.join(custom_names)}" if custom_names else ""
+        return (
+            f"Modo '{modo}' desconocido.\n"
+            f"Built-in: {', '.join(_MODOS_BUILTIN)}\n{hint}\n"
+            f"Crear uno: /modo nuevo {modo}"
+        )
     _MODO_ACTUAL = modo
     cfg = _MODOS[modo]
-    # Aplicar temperatura si el router está disponible
     if _router and _router is not False and cfg["temp"] is not None:
         _router._default_temperature = cfg["temp"]
-    return f"Modo cambiado a '{modo}' — {cfg['desc']}"
+    tag = " [custom]" if cfg.get("_custom") else ""
+    return f"Modo cambiado a '{modo}'{tag} — {cfg['desc']}"
 
 
 def cmd_rutina(arg: str) -> Optional[str]:
@@ -1068,7 +1183,7 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/exportar":  (cmd_exportar,    "Exportar sesión: /exportar [archivo.md|archivo.json]"),
     "/historial": (cmd_historial,   "Ver historial de la sesión: /historial [N turnos]"),
     "/rutina":    (cmd_rutina,      "Macros: /rutina definir <nombre> <cmd> ; <cmd>  ·  /rutina <nombre>"),
-    "/modo":       (cmd_modo,        "Modo de operación: /modo [normal|codigo|creativo|rapido|militar]"),
+    "/modo":       (cmd_modo,        "Modos: /modo <nombre> · /modo nuevo <nombre> · /modo borrar <nombre>"),
     "/mode":       (cmd_modo,        "→ /modo"),
     "/checkpoint": (cmd_checkpoint,  "Sesiones con nombre: /checkpoint [guardar|cargar|borrar|lista] <nombre>"),
     "/ckpt":       (cmd_checkpoint,  "→ /checkpoint"),
@@ -1415,7 +1530,11 @@ def _print_banner(ctx: dict) -> None:
     print(r"  ╚═╝  ╚═══╝ ╚═════╝   ╚═══╝  ╚═╝  ╚═╝")
     print(f"{c['reset']}")
     print(f"{c['dim']}{bar}{c['reset']}")
-    print(f"  {c['white']}{c['bold']}Nova Personal AI{c['reset']}  {c['dim']}v3.8{c['reset']}  "
+    try:
+        from nova import __version__ as _ver
+    except Exception:
+        _ver = "3.9"
+    print(f"  {c['white']}{c['bold']}Nova Personal AI{c['reset']}  {c['dim']}v{_ver}{c['reset']}  "
           f"{c['dim']}·{c['reset']}  {c['dim']}{now}{c['reset']}")
 
     if repo and branch:
