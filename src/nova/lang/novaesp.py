@@ -155,12 +155,19 @@ def _identify_speaker(wav_bytes: bytes) -> "str | None":
             return None
         feats = feats / norm
 
-        best_user, best_sim = None, _SPEAKER_THRESHOLD
+        # When only one profile exists we're gatekeeping (not just identifying) →
+        # use a stricter threshold so voices that are merely "similar" don't pass.
+        gate_threshold = (
+            max(_SPEAKER_THRESHOLD, 0.90)
+            if len(_ALL_SPEAKER_PROFILES) == 1
+            else _SPEAKER_THRESHOLD
+        )
+        best_user, best_sim = None, gate_threshold
         for user_id, profile_vec in _ALL_SPEAKER_PROFILES.items():
             sim = float(np.dot(profile_vec, feats))
             if sim > best_sim:
                 best_sim, best_user = sim, user_id
-        log.debug("[Speaker] best=%s sim=%.3f", best_user, best_sim)
+        log.debug("[Speaker] best=%s sim=%.3f threshold=%.2f", best_user, best_sim, gate_threshold)
         return best_user
     except Exception as e:
         log.warning("[Speaker] Error identificando voz: %s", e)
@@ -933,9 +940,9 @@ def _calibrate_recognizer(recognizer: sr.Recognizer, mic: sr.Microphone) -> None
     (TV, ventiladores, etc.). Escucha 3 segundos y ajusta automáticamente.
     Luego multiplica por un factor para exigir voces más cercanas.
     """
-    log.info("[voz] Calibrando ruido ambiente... 3 segundos")
+    log.info("[voz] Calibrando ruido ambiente... 1.5 segundos")
     with mic as source:
-        recognizer.adjust_for_ambient_noise(source, duration=3)
+        recognizer.adjust_for_ambient_noise(source, duration=1.5)
 
     factor = float(os.getenv("NOISE_FILTER_FACTOR", "1.5"))
     recognizer.energy_threshold *= factor
@@ -993,21 +1000,24 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
         speak(text, hud)
     skills.set_notify_callback(_bg_notify)
 
-    # ── Cargar contexto del Gran Cerebro ────────────────────────────────────
-    vault_ctx = ""
+    # ── Cargar contexto del Gran Cerebro (diferido — deja que el HUD arranque primero) ──
     if router is not None:
-        try:
-            vault_ctx = nova_memory.load_vault_context()
-        except AttributeError:
-            pass
-        if vault_ctx:
-            router.system_prompt = router.system_prompt + (
-                "\n\n[CONTEXTO DEL GRAN CEREBRO — actualizado al arrancar]\n"
-                + vault_ctx
-            )
-            print(f"  [Cerebro] Contexto cargado ({len(vault_ctx)} chars)")
-        else:
-            print("  [Cerebro] Vault no disponible o vacío — continuando sin contexto.")
+        def _deferred_vault_load(r=router):
+            time.sleep(6)  # HUD animation stabilizes, then load
+            try:
+                vault_ctx = nova_memory.load_vault_context()
+            except AttributeError:
+                vault_ctx = ""
+            if vault_ctx:
+                r.system_prompt = r.system_prompt + (
+                    "\n\n[CONTEXTO DEL GRAN CEREBRO — actualizado al arrancar]\n"
+                    + vault_ctx
+                )
+                print(f"  [Cerebro] Contexto cargado ({len(vault_ctx)} chars)")
+            else:
+                print("  [Cerebro] Vault no disponible o vacío — continuando sin contexto.")
+        threading.Thread(target=_deferred_vault_load, daemon=True,
+                         name="nova-vault-load").start()
 
     history: list[dict] = (
         [] if _daemon_client else nova_memory.get_recent_turns(MAX_HISTORY * 2)
