@@ -14,11 +14,26 @@ import logging
 # Activar DEBUG con: NOVA_LOG_LEVEL=DEBUG python main.py
 _log_level = getattr(logging, os.getenv("NOVA_LOG_LEVEL", "WARNING").upper(), logging.WARNING)
 logging.basicConfig(level=_log_level, format="%(levelname)s %(name)s: %(message)s")
-# Silenciar libs ruidosas siempre (excepto WARNING+)
+
+# Bloquear numba con filtro en el handler raíz — más robusto que setLevel porque
+# numba reconfigura sus propios loggers durante el JIT (que ocurre en un hilo worker).
+class _NoNumbaFilter(logging.Filter):
+    def filter(self, record):
+        return not record.name.startswith("numba")
+
+for _h in logging.root.handlers:
+    _h.addFilter(_NoNumbaFilter())
+
+# Además deshabilitar propagación en el logger raíz de numba
+_numba_log = logging.getLogger("numba")
+_numba_log.setLevel(logging.WARNING)
+_numba_log.propagate = False
+if not _numba_log.handlers:
+    _numba_log.addHandler(logging.NullHandler())
+
+# Silenciar otras libs ruidosas siempre (excepto WARNING+)
 for _noisy in ("httpx", "httpcore", "openai", "groq", "anthropic",
-               "qdrant_client", "mem0", "urllib3", "asyncio",
-               "numba", "numba.core", "numba.core.byteflow", "numba.core.interpreter",
-               "numba.core.ssa", "numba.core.postproc", "numba.core.typeinfer"):
+               "qdrant_client", "mem0", "urllib3", "asyncio"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # Cuando se empaqueta con PyInstaller, sys.executable es el .exe/.app
