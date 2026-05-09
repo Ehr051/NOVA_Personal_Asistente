@@ -310,13 +310,25 @@ def test_modo_builtin_militar_removed():
 
 
 def test_modo_nuevo_creates_file(tmp_path, monkeypatch):
+    """Wizard flow: cmd_modo starts it, _wizard_handle completes it."""
     import nova.cli.repl as repl
     monkeypatch.setattr(repl, "_MODOS_DIR", str(tmp_path / "modos"))
-    result = repl.cmd_modo("nuevo testmode Modo de prueba para testing")
+
+    # Step 0 — start wizard
+    result = repl.cmd_modo("nuevo testmode")
     assert "testmode" in result
+    assert repl._WIZARD_STATE.get("type") == "modo_nuevo"
+
+    # Step 0 — description
+    repl._wizard_handle("Modo de prueba para testing")
+    # Step 1 — temperature
+    repl._wizard_handle("0.5")
+    # Step 2 — system instructions (completes wizard)
+    final = repl._wizard_handle("Instrucciones de testing")
+    assert "testmode" in final
     assert (tmp_path / "modos" / "testmode.json").exists()
-    # Debe quedar en _MODOS
     assert "testmode" in repl._MODOS
+    assert not repl._WIZARD_STATE  # wizard must be cleared
 
 
 def test_modo_nuevo_cant_overwrite_builtin(tmp_path, monkeypatch):

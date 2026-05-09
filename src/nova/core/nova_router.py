@@ -107,6 +107,82 @@ def _parse_retry_after(exc: Exception) -> float | None:
     return 5.0
 
 
+# ─── CONTEXT WINDOW MANAGEMENT ───────────────────────────────────────────────
+
+# Límite de contexto en caracteres por provider (~4 chars/token como estimación)
+# Conservadores: reservamos ~30% para la respuesta
+_PROVIDER_CTX_CHARS: dict[str, int] = {
+    "Ollama":      24_000,   # depende del modelo local; 6k tokens es seguro
+    "Groq":        24_000,   # 8k tokens en modelos gratuitos
+    "Cerebras":    24_000,   # 8k tokens tier gratuito
+    "Mistral":     96_000,   # 32k tokens
+    "Codestral":   96_000,
+    "DeepSeek":    96_000,
+    "OpenRouter": 384_000,   # modelos 128k+
+    "OpenClaw":    24_000,
+    "Anthropic":  192_000,   # 200k tokens
+    "_default":    24_000,
+}
+
+_MAX_SINGLE_MSG_CHARS = 6_000   # ningún mensaje individual supera esto
+
+
+def _trim_messages(
+    messages: list[dict],
+    provider: str = "_default",
+    reserve_for_response: int = 2_000,
+) -> list[dict]:
+    """
+    Recorta el historial para que quepa en el contexto del provider.
+
+    Estrategia:
+      1. Preserva siempre el mensaje system (si existe).
+      2. Trunca mensajes individuales que superen _MAX_SINGLE_MSG_CHARS.
+      3. Elimina los turnos más antiguos (user+assistant) hasta entrar en límite.
+      4. El mensaje de usuario más reciente nunca se elimina.
+    """
+    limit = _PROVIDER_CTX_CHARS.get(provider, _PROVIDER_CTX_CHARS["_default"])
+    budget = limit - reserve_for_response
+
+    # Separar system del resto
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    other_msgs  = [m for m in messages if m.get("role") != "system"]
+
+    # Truncar mensajes individuales muy largos
+    def _truncate(m: dict) -> dict:
+        content = str(m.get("content", ""))
+        if len(content) > _MAX_SINGLE_MSG_CHARS:
+            m = dict(m)
+            m["content"] = content[:_MAX_SINGLE_MSG_CHARS] + " … [truncado]"
+        return m
+
+    system_msgs = [_truncate(m) for m in system_msgs]
+    other_msgs  = [_truncate(m) for m in other_msgs]
+
+    # Calcular cuántos chars ocupan los mensajes system
+    sys_chars = sum(len(str(m.get("content", ""))) for m in system_msgs)
+    remaining = budget - sys_chars
+
+    # Mantener siempre el último mensaje (la pregunta actual del usuario)
+    if not other_msgs:
+        return system_msgs
+
+    last_msg = other_msgs[-1]
+    candidates = other_msgs[:-1]
+
+    # Agregar mensajes desde el más reciente hacia atrás hasta llenar el budget
+    kept: list[dict] = []
+    used = len(str(last_msg.get("content", "")))
+    for m in reversed(candidates):
+        chars = len(str(m.get("content", "")))
+        if used + chars > remaining:
+            break
+        kept.insert(0, m)
+        used += chars
+
+    return system_msgs + kept + [last_msg]
+
+
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT_DEFAULT = (
@@ -669,24 +745,15 @@ class NovaRouter:
         desired_tier = force_tier or ComplexityDetector.detect(last_msg)
         actual_tier  = self._apply_budget_cap(desired_tier)
 
-        # LIMITAR HISTORIAL: máximo 6 mensajes (3 turnos) para evitar 413
-        MAX_HISTORY_MSGS = 6
-        if len(messages) > MAX_HISTORY_MSGS:
-            messages = messages[-MAX_HISTORY_MSGS:]
-        
         # Solo añadir el system prompt si no hay uno ya en la lista
         if not any(m.get("role") == "system" for m in messages):
             full_messages = [{"role": "system", "content": self.system_prompt}] + messages
         else:
-            full_messages = messages
-        
-        # Limitar tamaño total del prompt
-        total_chars = sum(len(str(m.get("content", ""))) for m in full_messages)
-        if total_chars > 8000:  # ~2000 tokens aprox
-            # Truncar mensajes más largos
-            for m in full_messages:
-                if len(str(m.get("content", ""))) > 2000:
-                    m["content"] = str(m["content"])[:2000] + "... [truncado]"
+            full_messages = list(messages)
+
+        # Determinar provider del primer candidato viable para calcular el límite
+        _first_provider = (self.provider_order[0] if self.provider_order else "_default").capitalize()
+        full_messages = _trim_messages(full_messages, provider=_first_provider)
 
         text, tokens, model, provider, billing_model = self._call_with_fallback(
             actual_tier, full_messages, max_tokens, temperature
@@ -722,18 +789,13 @@ class NovaRouter:
         desired_tier = force_tier or ComplexityDetector.detect(last_msg)
         actual_tier  = self._apply_budget_cap(desired_tier)
 
-        if len(messages) > 6:
-            messages = messages[-6:]
         if not any(m.get("role") == "system" for m in messages):
             full_messages = [{"role": "system", "content": self.system_prompt}] + messages
         else:
             full_messages = list(messages)
 
-        total_chars = sum(len(str(m.get("content", ""))) for m in full_messages)
-        if total_chars > 8000:
-            for m in full_messages:
-                if len(str(m.get("content", ""))) > 2000:
-                    m["content"] = str(m["content"])[:2000] + "... [truncado]"
+        _first_provider = (self.provider_order[0] if self.provider_order else "_default").capitalize()
+        full_messages = _trim_messages(full_messages, provider=_first_provider)
 
         for provider in self.provider_order:
             client: OpenAI | None = None

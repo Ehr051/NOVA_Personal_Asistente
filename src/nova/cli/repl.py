@@ -713,6 +713,81 @@ def _load_custom_modos() -> None:
 
 _load_custom_modos()
 
+# ─── WIZARD STATE ──────────────────────────────────────────────────────────────
+# Holds active interactive wizard session.  Empty dict = no wizard running.
+# Supported wizard types: "modo_nuevo"
+_WIZARD_STATE: dict = {}
+
+
+def _wizard_handle(line: str) -> str:
+    """
+    Process one line of input for the active wizard.
+    Returns text to print.  Clears _WIZARD_STATE when wizard finishes.
+    """
+    import json as _j
+    from pathlib import Path
+    global _WIZARD_STATE
+
+    wtype = _WIZARD_STATE.get("type")
+    step  = _WIZARD_STATE.get("step", 0)
+    data  = _WIZARD_STATE.setdefault("data", {})
+
+    c = _ANSI
+
+    if wtype == "modo_nuevo":
+        name = _WIZARD_STATE["name"]
+
+        if step == 0:
+            # Received: description
+            data["desc"] = line.strip() or f"Modo personalizado {name}"
+            _WIZARD_STATE["step"] = 1
+            return (
+                f"{c['dim']}  Temperatura (0.0 creativo → 1.0 determinista, Enter para 0.7):{c['reset']}"
+            )
+
+        if step == 1:
+            # Received: temperature
+            raw = line.strip()
+            try:
+                temp = float(raw) if raw else 0.7
+                temp = max(0.0, min(1.0, temp))
+            except ValueError:
+                temp = 0.7
+            data["temp"] = temp
+            _WIZARD_STATE["step"] = 2
+            return (
+                f"{c['dim']}  Instrucciones de sistema (Enter para dejar vacío):{c['reset']}"
+            )
+
+        if step == 2:
+            # Received: system instructions
+            data["extra"] = line.strip()
+            _WIZARD_STATE["step"] = 3
+
+        if step >= 2:
+            # Build and save
+            nuevo = {
+                "desc":  data.get("desc", f"Modo {name}"),
+                "temp":  data.get("temp", 0.7),
+                "tier":  None,
+                "extra": data.get("extra", ""),
+            }
+            modos_dir = Path(_MODOS_DIR)
+            modos_dir.mkdir(parents=True, exist_ok=True)
+            path = modos_dir / f"{name}.json"
+            path.write_text(_j.dumps(nuevo, ensure_ascii=False, indent=2), encoding="utf-8")
+            _MODOS[name] = {**nuevo, "_custom": True}
+            _WIZARD_STATE.clear()
+            return (
+                f"\n  Modo '{name}' creado en {path}\n"
+                f"  Activar con: /modo {name}\n"
+                f"  Editá el JSON para ajustar en cualquier momento."
+            )
+
+    # Unknown wizard type — bail out
+    _WIZARD_STATE.clear()
+    return "Wizard cancelado."
+
 
 def cmd_modo(arg: str) -> Optional[str]:
     """
@@ -749,33 +824,21 @@ def cmd_modo(arg: str) -> Optional[str]:
         lines.append("\nCrear modo: /modo nuevo <nombre>")
         return "\n".join(lines)
 
-    # ── nuevo ────────────────────────────────────────────────────────────────
+    # ── nuevo (wizard) ───────────────────────────────────────────────────────
     if sub == "nuevo":
         name = rest.split()[0].lower() if rest else ""
         if not name:
-            return "Uso: /modo nuevo <nombre>  (luego Nova te pregunta los parámetros)"
+            return "Uso: /modo nuevo <nombre>"
         if name in _MODOS_BUILTIN:
             return f"'{name}' es un modo built-in y no se puede sobreescribir."
 
-        # Defaults razonables — el usuario puede editar el JSON después
-        desc_hint = " ".join(rest.split()[1:]) or f"Modo personalizado {name}"
-        nuevo = {
-            "desc":  desc_hint,
-            "temp":  0.7,
-            "tier":  None,
-            "extra": f"Instrucciones de sistema para el modo {name}. Editá ~/.nova/modos/{name}.json para personalizar.",
-        }
-        modos_dir = Path(_MODOS_DIR)
-        modos_dir.mkdir(parents=True, exist_ok=True)
-        path = modos_dir / f"{name}.json"
-        path.write_text(_j.dumps(nuevo, ensure_ascii=False, indent=2), encoding="utf-8")
-        _MODOS[name] = {**nuevo, "_custom": True}
+        # Start interactive wizard
+        c = _ANSI
+        _WIZARD_STATE.clear()
+        _WIZARD_STATE.update({"type": "modo_nuevo", "name": name, "step": 0, "data": {}})
         return (
-            f"Modo '{name}' creado.\n"
-            f"Editá {path} para ajustar temperatura, tier y system_extra.\n"
-            f"Formato JSON:\n"
-            f'  {{"desc":"...","temp":0.7,"tier":null,"extra":"instrucciones de sistema"}}\n'
-            f"Activar: /modo {name}"
+            f"Creando modo '{name}' — respondé las siguientes preguntas (Enter para defaults):\n"
+            f"{c['dim']}  Descripción corta (ej: 'Respuestas técnicas concisas'):{c['reset']}"
         )
 
     # ── borrar ───────────────────────────────────────────────────────────────
@@ -1576,6 +1639,13 @@ def run() -> int:
             return 0
 
         if not line:
+            continue
+
+        # Active wizard takes priority over normal dispatch
+        if _WIZARD_STATE:
+            result = _wizard_handle(line)
+            if result:
+                print(result)
             continue
 
         # Slash command o LLM
