@@ -661,47 +661,52 @@ if _WAKE_BASE == "nova":
 
 # Palabras de acción que confirman que es un comando real (no diálogo de tele)
 _COMMAND_STARTERS = {
-    # Acciones del sistema
-    "abre", "abrir", "cierra", "cerrar", "inicia", "lanza", "ejecuta",
-    "busca", "buscar", "encuentra", "muestra", "lista", "listar",
-    "corre", "pon", "sube", "baja", "silencia", "silenciar",
-    "captura", "screenshot", "toma", "saca",
-    "recuerda", "olvida", "guarda", "anota",
-    "piloto", "maneja", "opera", "toma", "hazlo",
-    "cambia", "cambiame", "habla", "hablar",
-    "reinicia", "reiniciar", "reiniciate", "restart",
+    # Acciones del sistema — tuteo + voseo (rioplatense)
+    "abre", "abrí", "abrir", "cierra", "cerrá", "cerrar",
+    "inicia", "iniciá", "lanza", "lanzá", "ejecuta", "ejecutá",
+    "busca", "buscá", "buscar", "encuentra", "encontrá", "muestra", "mostrá",
+    "lista", "listá", "listar",
+    "corre", "corré", "pon", "poné", "sube", "subí", "baja", "bajá",
+    "silencia", "silenciá", "silenciar",
+    "captura", "capturá", "screenshot", "toma", "tomá", "saca", "sacá",
+    "recuerda", "recordá", "olvida", "olvidá", "guarda", "guardá", "anota", "anotá",
+    "piloto", "maneja", "manejá", "opera", "operá", "hazlo", "hacelo",
+    "cambia", "cambiá", "habla", "hablá", "hablar",
+    "reinicia", "reiniciá", "reiniciar", "restart",
     "temporizador", "timer", "alarma", "volumen",
     "salir", "sal", "apágate", "adiós", "adios", "chau",
     # Tema HUD
     "siguiente", "tema", "anterior",
     # Música
-    "reproduce", "reproducir", "pausa", "pausar", "música", "musica",
-    "canción", "cancion", "pista", "siguiente", "anterior", "play",
-    "pause", "skip", "toca", "tocar", "shuffle", "aleatorio",
+    "reproduce", "reproducí", "reproducir", "pausa", "pausá", "pausar",
+    "música", "musica", "canción", "cancion", "pista", "play",
+    "pause", "skip", "toca", "tocá", "tocar", "shuffle", "aleatorio",
     # Notas / dictado
-    "anota", "apunta", "nota", "notas", "escribe", "redacta", "dicta",
-    "inicio", "iniciar", "inicializar", "comenzar", "finalizar",
+    "apunta", "apuntá", "nota", "notas", "escribe", "escribí", "redacta", "redactá",
+    "dicta", "dictá", "comenzar", "finalizar",
     # Preguntas
     "qué", "que", "cuál", "cual", "cuándo", "cuando",
     "cómo", "como", "cuánto", "cuanto", "quién", "quien", "dónde", "donde",
-    "dime", "di", "cuéntame", "cuentame", "explícame", "explicame",
+    "dime", "decime", "di", "cuéntame", "contame", "explícame", "explicame",
     # Otras intenciones comunes
-    "hay", "puedes", "puedo", "necesito", "quiero", "ayuda",
-    "eres", "sabes", "tienes", "qué hora", "hora", "fecha",
+    "hay", "podés", "puedes", "puedo", "necesito", "quiero", "ayuda",
+    "sos", "eres", "sabés", "sabes", "tenés", "tienes", "hora", "fecha",
 }
 
-def _extract_command(text: str) -> str | None:
+def _extract_command(text: str, verified_speaker: bool = False) -> str | None:
     """
     Devuelve el comando después del wake word, o None si no hay wake word.
-    Las variantes débiles ("a", "ova") solo activan si el comando empieza
+    Las variantes débiles ("no va") solo activan si el comando empieza
     con una palabra de acción reconocida — filtra diálogo de TV.
+    Con verified_speaker=True se ignora esa restricción (ya sabemos quién habla).
     """
     lower = text.lower().strip()
     for ww in sorted(WAKE_WORDS, key=len, reverse=True):  # más largo primero
         if lower.startswith(ww):
             cmd = text[len(ww):].strip(" ,.:").strip()
             # Variante débil: primera palabra del comando debe ser acción conocida
-            if ww in _WEAK_VARIANTS:
+            # (a menos que el hablante esté verificado — ahí confiamos en la voz)
+            if ww in _WEAK_VARIANTS and not verified_speaker:
                 first_word = cmd.split()[0].lower() if cmd.split() else ""
                 if first_word not in _COMMAND_STARTERS:
                     continue
@@ -805,7 +810,7 @@ def listen(
     # NO se bypasea completamente — TV y conversaciones de fondo pasarían (problema real).
     # NOVA_WAKE_FREE=1 en .env desactiva esto para ambientes muy silenciosos.
     if _SPEAKER_VERIFY and os.getenv("NOVA_WAKE_FREE", "0") != "1":
-        cmd = _extract_command(text)
+        cmd = _extract_command(text, verified_speaker=True)
         if cmd is not None:
             hud.put_state(status="THINKING", user_text=text)
             return cmd if cmd else "__wake_only__"
