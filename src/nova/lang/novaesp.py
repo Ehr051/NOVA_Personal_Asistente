@@ -808,10 +808,9 @@ def listen(
         hud.put_state(status="THINKING", user_text=text)
         return text
 
-    # Con perfil de voz verificado: wake word para iniciar, luego ventana de contexto
-    # NO se bypasea completamente — TV y conversaciones de fondo pasarían (problema real).
-    # NOVA_WAKE_FREE=1 en .env desactiva esto para ambientes muy silenciosos.
-    if _SPEAKER_VERIFY and os.getenv("NOVA_WAKE_FREE", "0") != "1":
+    # Con perfil de voz verificado: por defecto modo libre (sin wake word).
+    # El umbral MFCC 0.90 es el gate. NOVA_WAKE_REQUIRED=1 en .env fuerza wake word.
+    if _SPEAKER_VERIFY and os.getenv("NOVA_WAKE_REQUIRED", "0") == "1":
         cmd = _extract_command(text, verified_speaker=True)
         if cmd is not None:
             hud.put_state(status="THINKING", user_text=text)
@@ -830,7 +829,7 @@ def listen(
         hud.put_state(status="IDLE")
         return None
 
-    if _SPEAKER_VERIFY:  # NOVA_WAKE_FREE=1 — bypasear wake word completamente
+    if _SPEAKER_VERIFY:  # modo libre — umbral MFCC es el único gate
         hud.put_state(status="THINKING", user_text=text)
         return text
 
@@ -1181,7 +1180,11 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             return
 
         # Skills siempre locales (independiente del daemon)
-        skill_resp = skills.dispatch(text)
+        try:
+            skill_resp = skills.dispatch(text)
+        except Exception as _sk_err:
+            log.warning("[SKILL/HUD] Error en skill '%s': %s", text[:60], _sk_err)
+            skill_resp = f"Hubo un error ejecutando esa skill, Señor: {_sk_err}"
         if skill_resp:
             print(f"Asistente: {skill_resp}")
             hud.put_state(status="SKILL", response_text=skill_resp, model_info="[SKILL LOCAL]")
@@ -1242,15 +1245,9 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
     hud.set_text_callback(_on_text_input)
 
     if _SPEAKER_VERIFY:
-        _wake_free = os.getenv("NOVA_WAKE_FREE", "0") == "1"
         greeting = (
             f"Sistema {ASSISTANT_NAME} activado con reconocimiento de voz. "
-            + (
-                f"Solo respondo a usted, Señor. No necesita palabra de activación."
-                if _wake_free else
-                f"Reconozco su voz, Señor. Di '{_WAKE_BASE.capitalize()}' para hablar, "
-                f"luego podés continuar sin wake word por {FOLLOWUP_WINDOW_SEC} segundos."
-            )
+            f"Solo respondo a usted, Señor. No necesita palabra de activación."
         )
     elif REQUIRE_WAKE_WORD:
         greeting = (
@@ -1419,7 +1416,11 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             continue
 
         # ── Skill local primero ───────────────────────────────
-        skill_resp = skills.dispatch(user_input)
+        try:
+            skill_resp = skills.dispatch(user_input)
+        except Exception as _sk_err:
+            log.warning("[SKILL] Error en skill '%s': %s", user_input[:60], _sk_err)
+            skill_resp = f"Hubo un error ejecutando esa skill, Señor: {_sk_err}"
         if skill_resp is not None:
             print(f"  [SKILL] {skill_resp[:100]}")
             print(f"Asistente: {skill_resp}")

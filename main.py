@@ -16,7 +16,9 @@ _log_level = getattr(logging, os.getenv("NOVA_LOG_LEVEL", "WARNING").upper(), lo
 logging.basicConfig(level=_log_level, format="%(levelname)s %(name)s: %(message)s")
 # Silenciar libs ruidosas siempre (excepto WARNING+)
 for _noisy in ("httpx", "httpcore", "openai", "groq", "anthropic",
-               "qdrant_client", "mem0", "urllib3", "asyncio"):
+               "qdrant_client", "mem0", "urllib3", "asyncio",
+               "numba", "numba.core", "numba.core.byteflow", "numba.core.interpreter",
+               "numba.core.ssa", "numba.core.postproc", "numba.core.typeinfer"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 # Cuando se empaqueta con PyInstaller, sys.executable es el .exe/.app
