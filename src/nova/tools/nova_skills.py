@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import glob
 import logging
 import subprocess
@@ -4721,6 +4722,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_cambiar_idioma, "text"),
     "configurar_api":   ("Guardar una API key en el .env desde el chat (groq, openrouter, anthropic, etc.)",
                         skill_configurar_apikey, "text"),
+    "listar_plugins":   ("Ver plugins externos cargados en Nova",
+                        lambda: __import__('nova.tools.nova_plugin_loader', fromlist=['plugin_status']).plugin_status(), None),
 }
 
 
@@ -4870,11 +4873,20 @@ def needs_web_search(user_input: str) -> bool:
     return any(kw in lower for kw in _REALTIME_KEYWORDS)
 
 
-# Export the module itself as 'skills' for backward compatibility with novaesp.py
-import sys
-skills = sys.modules[__name__]
+# ── Plugin system — carga al final para que _INTENTS y _TOOL_CATALOG ya existan ──
+def skill_plugins(texto: str = "") -> str:
+    """Lista plugins externos cargados."""
+    try:
+        from nova.tools.nova_plugin_loader import plugin_status
+        return plugin_status()
+    except Exception as e:
+        return f"Error listando plugins: {e}"
 
+try:
+    from nova.tools.nova_plugin_loader import load_plugins as _load_plugins
+    _load_plugins(_INTENTS, _TOOL_CATALOG, skills_module=sys.modules[__name__])
+except Exception as _plug_err:
+    log.debug("[plugins] No se pudieron cargar plugins: %s", _plug_err)
 
 # Export the module itself as 'skills' for backward compatibility
-import sys
 skills = sys.modules[__name__]
