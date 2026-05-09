@@ -35,9 +35,14 @@ except ImportError:
     _HAS_DDG = False
 
 import nova.core.nova_memory as mem
-import pyautogui
-# PyAutoGUI safety: mover el mouse a la esquina superior izquierda detiene el script
-pyautogui.FAILSAFE = True
+
+try:
+    import pyautogui
+    pyautogui.FAILSAFE = True
+    _HAS_PYAUTOGUI = True
+except Exception:
+    pyautogui = None  # type: ignore[assignment]
+    _HAS_PYAUTOGUI = False
 
 # n8n integration (importación diferida para no fallar si falta config)
 try:
@@ -761,11 +766,15 @@ def skill_feriados(texto: str) -> str:
 
 def mouse_move(x: int, y: int) -> str:
     """Mueve el mouse a coordenadas específicas."""
+    if not _HAS_PYAUTOGUI:
+        return "PyAutoGUI no disponible en este sistema."
     pyautogui.moveTo(x, y, duration=0.25)
     return f"Mouse movido a {x}, {y}, Señor."
 
 def mouse_click(x: int | None = None, y: int | None = None, clicks: int = 1) -> str:
     """Hace click en la posición actual o en una específica."""
+    if not _HAS_PYAUTOGUI:
+        return "PyAutoGUI no disponible en este sistema."
     if x is not None and y is not None:
         pyautogui.click(x, y, clicks=clicks)
         return f"Click realizado en {x}, {y}, Señor."
@@ -774,21 +783,29 @@ def mouse_click(x: int | None = None, y: int | None = None, clicks: int = 1) -> 
 
 def mouse_scroll(amount: int) -> str:
     """Scroll vertical."""
+    if not _HAS_PYAUTOGUI:
+        return "PyAutoGUI no disponible en este sistema."
     pyautogui.scroll(amount)
     return "Scroll realizado, Señor."
 
 def type_text(text: str) -> str:
     """Escribe texto simulando pulsaciones de teclas."""
+    if not _HAS_PYAUTOGUI:
+        return "PyAutoGUI no disponible en este sistema."
     pyautogui.write(text, interval=0.05)
     return "Texto escrito, Señor."
 
 def press_key(key: str) -> str:
     """Presiona una tecla especial (enter, tab, esc, etc)."""
+    if not _HAS_PYAUTOGUI:
+        return "PyAutoGUI no disponible en este sistema."
     pyautogui.press(key)
     return f"Tecla {key} presionada, Señor."
 
 def get_mouse_pos() -> str:
     """Devuelve la posición actual del mouse."""
+    if not _HAS_PYAUTOGUI:
+        return "PyAutoGUI no disponible en este sistema."
     x, y = pyautogui.position()
     return f"El mouse está en x={x}, y={y}, Señor."
 
@@ -979,8 +996,7 @@ def _type_via_clipboard(text: str) -> None:
     import time; time.sleep(0.15)
     if PLATFORM == "macos":
         _osascript('tell application "System Events" to keystroke "v" using command down')
-    else:
-        import pyautogui
+    elif _HAS_PYAUTOGUI:
         pyautogui.hotkey("ctrl", "v")
 
 

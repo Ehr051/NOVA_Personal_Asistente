@@ -25,4 +25,6 @@ jobs:
           pip install -r requirements.txt 2>/dev/null || true
 
       - name: Run tests
+        env:
+          DISPLAY: ":0"
         run: python -m pytest tests/ -q --tb=short
