@@ -183,6 +183,7 @@ def cmd_help(_: str) -> Optional[str]:
 
 
 def cmd_exit(_: str) -> Optional[str]:
+    _generate_session_summary()
     print("Hasta luego, Señor.")
     sys.exit(0)
 
@@ -1444,6 +1445,82 @@ def cmd_usuario(arg: str) -> Optional[str]:
     return "Uso: /usuario [lista|nuevo <id>|cambiar <id>|borrar <id>]"
 
 
+# ─── Resumen de sesión a Obsidian ─────────────────────────────────────────────
+
+def _generate_session_summary() -> None:
+    """Genera un resumen de la sesión y lo guarda en ~/Cerebro/NOVA/Sesiones/."""
+    _lazy_init()
+    history = _session_state.get("history", [])
+    if len(history) < 4:
+        return  # sesión demasiado corta, no vale la pena
+
+    import datetime as _dt
+    ts = _dt.datetime.now().strftime("%Y-%m-%d_%H-%M")
+    dest = Path.home() / "Cerebro" / "NOVA" / "Sesiones" / f"{ts}.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    # Construir transcripción compacta (máx 8k chars) para el prompt
+    lines = []
+    for m in history[-40:]:
+        role = "Usuario" if m["role"] == "user" else "Nova"
+        lines.append(f"**{role}:** {m['content'][:600]}")
+    transcript = "\n\n".join(lines)[:8000]
+
+    if not _router or _router is False:
+        return
+
+    prompt = (
+        "Generá un resumen ejecutivo de esta sesión de trabajo con Nova. "
+        "Incluye: qué se trabajó, decisiones tomadas, tareas completadas, tareas pendientes. "
+        "Formato Markdown. Máximo 300 palabras.\n\n"
+        f"Transcripción:\n{transcript}"
+    )
+    try:
+        summary = _router.route([
+            {"role": "system", "content": "Eres un asistente que resume sesiones de trabajo."},
+            {"role": "user", "content": prompt},
+        ])
+        content = f"# Sesión Nova — {ts}\n\n{summary}\n"
+        dest.write_text(content, encoding="utf-8")
+        print(f"\n  [Resumen guardado en Cerebro: {dest.name}]")
+    except Exception as e:
+        log.debug("[REPL] session summary failed: %s", e)
+
+
+def cmd_resumen(args: str) -> Optional[str]:
+    """Genera y guarda el resumen de la sesión actual en Obsidian."""
+    _generate_session_summary()
+    return None  # output ya impreso por _generate_session_summary
+
+
+# ─── Home Assistant ───────────────────────────────────────────────────────────
+
+def cmd_ha(args: str) -> Optional[str]:
+    """Gestión de Home Assistant: /ha [status|list [domain]|alias <nombre>=<entity>]"""
+    _lazy_init()
+    try:
+        from nova.connectors.nova_home_assistant import (
+            ha_status, ha_list_entities, skill_ha_alias,
+        )
+    except ImportError:
+        return "Conector Home Assistant no disponible."
+
+    sub = args.strip().lower()
+    if not sub or sub == "status":
+        return ha_status()
+    if sub.startswith("list"):
+        domain = sub[4:].strip()
+        return ha_list_entities(domain)
+    if sub.startswith("alias "):
+        return skill_ha_alias(sub[6:].strip())
+    return (
+        "Uso: /ha [status | list [domain] | alias <nombre>=<entity_id>]\n"
+        "Ej:  /ha status\n"
+        "     /ha list light\n"
+        "     /ha alias cocina=light.cocina_principal"
+    )
+
+
 SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     # ── Principales (español) ──────────────────────────────────────────────────
     "/ayuda":     (cmd_help,        "Lista de comandos"),
@@ -1479,6 +1556,9 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/profile":    (cmd_perfil,      "→ /perfil"),
     "/usuario":    (cmd_usuario,     "Multi-usuario: /usuario nuevo <id> · cambiar <id> · lista · borrar <id>"),
     "/user":       (cmd_usuario,     "→ /usuario"),
+    "/resumen":    (cmd_resumen,     "Guardar resumen de sesión en Obsidian/Cerebro"),
+    "/summary":    (cmd_resumen,     "→ /resumen"),
+    "/ha":         (cmd_ha,          "Home Assistant: /ha [status|list [domain]|alias <nombre>=<entity>]"),
     "/export":    (cmd_exportar,    "→ /exportar"),
     "/history":   (cmd_historial,   "→ /historial"),
     "/routine":   (cmd_rutina,      "→ /rutina"),
@@ -1606,6 +1686,46 @@ def _dispatch_slash(line: str) -> Optional[str]:
         return f"Error ejecutando {cmd}: {e}"
 
 
+def _get_git_context() -> str:
+    """Retorna contexto git breve si el CWD es un repo. Vacío si no."""
+    try:
+        import subprocess
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        )
+        if branch.returncode != 0:
+            return ""
+        status = subprocess.run(
+            ["git", "status", "--short"],
+            capture_output=True, text=True, timeout=2,
+        )
+        log_out = subprocess.run(
+            ["git", "log", "--oneline", "-5"],
+            capture_output=True, text=True, timeout=2,
+        )
+        parts = [f"[git: rama {branch.stdout.strip()}]"]
+        if status.stdout.strip():
+            parts.append("Cambios:\n" + status.stdout.strip()[:400])
+        if log_out.stdout.strip():
+            parts.append("Últimos commits:\n" + log_out.stdout.strip()[:300])
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
+_GIT_KEYWORDS = frozenset([
+    "git", "commit", "branch", "rama", "merge", "rebase", "diff",
+    "cambios", "modificaciones", "archivo", "código", "código",
+    "función", "bug", "error", "test", "deploy", "push", "pull",
+])
+
+
+def _should_inject_git(text: str) -> bool:
+    lower = text.lower()
+    return any(kw in lower for kw in _GIT_KEYWORDS)
+
+
 def _route_to_llm(text: str) -> str:
     """Envía el texto al LLM con contexto de skills y memoria."""
     _lazy_init()
@@ -1704,6 +1824,10 @@ def _route_to_llm(text: str) -> str:
         sys_parts.append(extra_ctx)
     if cerebro_ctx:
         sys_parts.append(cerebro_ctx)
+    if _should_inject_git(text):
+        git_ctx = _get_git_context()
+        if git_ctx:
+            sys_parts.append(git_ctx)
     if _at_file_blocks:
         sys_parts.append("[Archivos de contexto]\n\n" + "\n\n".join(_at_file_blocks))
     system_msg = {"role": "system", "content": "\n\n".join(p for p in sys_parts if p)}
@@ -1872,6 +1996,7 @@ def run() -> int:
             line = read("nova> ").strip()
         except (EOFError, KeyboardInterrupt):
             _session_save()
+            _generate_session_summary()
             print("\nHasta luego, Señor.")
             return 0
 

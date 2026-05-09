@@ -4797,6 +4797,62 @@ _INTENTS += [
     (r"(?:de\s+forma\s+aut[oó]noma|aut[oó]nomamente|sin\s+ayuda)\s+(.+)", skill_agente, 1),
 ]
 
+# ── Home Assistant ────────────────────────────────────────────────────────────
+try:
+    from nova.connectors.nova_home_assistant import (
+        skill_ha_lights_on, skill_ha_lights_off, skill_ha_lights_dim,
+        skill_ha_vacuum_start, skill_ha_vacuum_stop, skill_ha_vacuum_return,
+        skill_ha_scene, skill_ha_state, skill_ha_alias, skill_ha_turn_on,
+        skill_ha_turn_off, ha_list_entities, ha_status,
+    )
+    _HAS_HA = True
+    _INTENTS += [
+        # Luces
+        (r"(?:enciende|encendé|prende|prendé|pon)\s+(?:las?\s+)?(?:luz|luces|iluminaci[oó]n)(?:\s+de[l]?\s+(.+))?",
+         skill_ha_lights_on, 1),
+        (r"(?:apaga|apagá)\s+(?:las?\s+)?(?:luz|luces|iluminaci[oó]n)(?:\s+de[l]?\s+(.+))?",
+         skill_ha_lights_off, 1),
+        (r"(?:atenú[ae]a?|baj[ae]a?|sube?)\s+(?:las?\s+)?(?:luz|luces).*",
+         skill_ha_lights_dim, 0),
+        (r"(?:luces?\s+al\s+\d+|dimmer?\s+(?:al\s+)?\d+).*",
+         skill_ha_lights_dim, 0),
+        # Aspiradora
+        (r"(?:arrancá?|inicia|iniciá?|pon[eé])\s+(?:la\s+)?(?:aspiradora|robot\s*aspiradora?|roomba|roborock)",
+         skill_ha_vacuum_start, None),
+        (r"(?:apagá?|para|detené?|frená?)\s+(?:la\s+)?(?:aspiradora|robot)",
+         skill_ha_vacuum_stop, None),
+        (r"(?:mandá?|enviá?|llev[ae]á?)\s+(?:la\s+)?(?:aspiradora|robot)\s+(?:a\s+)?(?:la\s+)?(?:base|dock|carga|estaci[oó]n)",
+         skill_ha_vacuum_return, None),
+        # Escenas
+        (r"(?:activ[ae]|pon[eé]|modo)\s+(?:la\s+)?(?:escena|ambiente|modo)\s+(.+)",
+         skill_ha_scene, 1),
+        # Estado
+        (r"(?:qu[eé]\s+estado\s+tiene|c[oó]mo\s+est[aá]|estado\s+de)\s+(.+)",
+         skill_ha_state, 1),
+        # Aliases
+        (r"llama\s+.+\s+a\s+[a-z_]+\.[a-z_]+",
+         skill_ha_alias, 0),
+        # Genérico encender/apagar dispositivo
+        (r"(?:enciende|encendé|prende|prendé|activá?)\s+(?:el?|la|los|las)?\s*(.+)",
+         skill_ha_turn_on, 1),
+        (r"(?:apagá?|desactivá?)\s+(?:el?|la|los|las)?\s*(.+)",
+         skill_ha_turn_off, 1),
+    ]
+    _TOOL_CATALOG["ha_lights_on"]      = ("Encender luces (room opcional)", skill_ha_lights_on,  "text")
+    _TOOL_CATALOG["ha_lights_off"]     = ("Apagar luces (room opcional)",   skill_ha_lights_off, "text")
+    _TOOL_CATALOG["ha_lights_dim"]     = ("Atenuar luces con porcentaje",   skill_ha_lights_dim, "text")
+    _TOOL_CATALOG["ha_vacuum_start"]   = ("Iniciar aspiradora robot",       skill_ha_vacuum_start, None)
+    _TOOL_CATALOG["ha_vacuum_stop"]    = ("Detener aspiradora robot",       skill_ha_vacuum_stop,  None)
+    _TOOL_CATALOG["ha_vacuum_return"]  = ("Aspiradora → base de carga",     skill_ha_vacuum_return, None)
+    _TOOL_CATALOG["ha_scene"]          = ("Activar escena de HA",           skill_ha_scene,  "text")
+    _TOOL_CATALOG["ha_state"]          = ("Estado de dispositivo HA",       skill_ha_state,  "text")
+    _TOOL_CATALOG["ha_turn_on"]        = ("Encender dispositivo HA",        skill_ha_turn_on, "text")
+    _TOOL_CATALOG["ha_turn_off"]       = ("Apagar dispositivo HA",          skill_ha_turn_off, "text")
+    log.debug("[HA] Home Assistant connector cargado.")
+except ImportError as _ha_err:
+    _HAS_HA = False
+    log.debug("[HA] Conector HA no disponible: %s", _ha_err)
+
 
 def llm_dispatch(user_input: str) -> str | None:
     """
