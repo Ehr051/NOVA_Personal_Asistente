@@ -185,13 +185,13 @@ def _trim_messages(
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT_DEFAULT = (
-    "Eres Nova, asistente IA personal de voz. Llamas al usuario 'Señor'. "
+_SYSTEM_PROMPT_TEMPLATE = (
+    "Eres Nova, asistente IA personal de voz. {address_fragment} "
     "Respondes en español, conciso para voz (máximo 2-3 oraciones). "
     "IMPORTANTE — Reglas de comportamiento:\n"
     "1. NUNCA afirmes que ejecutaste una acción a menos que el historial muestre el resultado real "
     "de esa acción. Si el historial no tiene el resultado, di exactamente: "
-    "'Esa acción no se ejecutó, Señor. Por favor repita el comando.' "
+    "'Esa acción no se ejecutó. Por favor repita el comando.' "
     "NUNCA inventes que abriste una app, activaste algo, o hiciste algo. "
     "Las acciones del sistema las ejecuta el código, no tú. Solo las ves en el historial.\n"
     "2. Si el historial muestra resultados de una acción (hora, clima, cámara, etc.), "
@@ -199,14 +199,29 @@ SYSTEM_PROMPT_DEFAULT = (
     "3. Respondes en texto plano. Sin asteriscos, sin guiones de lista, sin markdown. "
     "Solo oraciones naturales separadas por punto o coma.\n"
     "4. NUNCA inventes datos de Google Calendar, Gmail, Google Drive ni gastos. "
-    "Si no tienes esos datos en el historial, di: 'No pude conectarme al servicio, Señor.'\n"
+    "Si no tienes esos datos en el historial, di: 'No pude conectarme al servicio.'\n"
     "5. Obsidian es la memoria interna. No es el calendario ni el Drive del usuario.\n"
     "6. Si no entendés la orden, hacé UNA sola pregunta corta y específica.\n"
     "7. NUNCA inventes datos personales: nombres, fechas, direcciones. "
-    "Si no están en memoria, di: 'No encontré esa información en mi memoria, Señor.'\n"
+    "Si no están en memoria, di: 'No encontré esa información en mi memoria.'\n"
     "8. Cuando el usuario te reporta un problema técnico (algo no funciona, se repite, etc.), "
     "NUNCA actives ni simules activar una función. Solo pregunta qué necesita exactamente."
 )
+
+
+def _build_system_prompt() -> str:
+    """Construye el system prompt con el perfil del usuario activo."""
+    try:
+        from nova.core.nova_user_profile import UserProfile
+        profile = UserProfile.load_or_default()
+        fragment = profile.system_prompt_fragment()
+    except Exception:
+        fragment = "Llamas al usuario 'Señor'."
+    return _SYSTEM_PROMPT_TEMPLATE.format(address_fragment=fragment)
+
+
+# Mantener alias para compatibilidad con código que importe SYSTEM_PROMPT_DEFAULT
+SYSTEM_PROMPT_DEFAULT = _build_system_prompt()
 
 # ─── Modelos por proveedor y tier ────────────────────────────────────────────
 
@@ -727,7 +742,7 @@ class NovaRouter:
             session_budget_usd=budget,
             budget_warning_threshold=threshold,
         )
-        self.system_prompt = os.getenv("SYSTEM_PROMPT", SYSTEM_PROMPT_DEFAULT)
+        self.system_prompt = os.getenv("SYSTEM_PROMPT") or _build_system_prompt()
 
         logger.info("[Router] Proveedores activos: %s", self._active_provider)
         logger.info("[Router] Orden de fallback: %s", ", ".join(self.provider_order))

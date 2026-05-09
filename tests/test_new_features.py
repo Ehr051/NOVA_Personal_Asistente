@@ -390,3 +390,121 @@ def test_nova_version():
     )
     assert result.returncode == 0
     assert "nova" in result.stdout.lower() or "3." in result.stdout
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 6. User profile + onboarding
+# ════════════════════════════════════════════════════════════════════════════
+
+def test_user_profile_save_load(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    profile = up.UserProfile(address="Señora", notes="Ingeniera de software")
+    profile.save()
+    loaded = up.UserProfile.load()
+    assert loaded is not None
+    assert loaded.address == "Señora"
+    assert loaded.notes == "Ingeniera de software"
+
+
+def test_user_profile_exists(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    assert not up.UserProfile.exists()
+    up.UserProfile(address="Señor").save()
+    assert up.UserProfile.exists()
+
+
+def test_user_profile_load_or_default(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    profile = up.UserProfile.load_or_default()
+    assert profile.address == "Señor"  # default when no file
+
+
+def test_system_prompt_fragment_senora(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    profile = up.UserProfile(address="Señora", name="María", notes="Médica")
+    frag = profile.system_prompt_fragment()
+    assert "Señora" in frag
+    assert "María" in frag
+    assert "Médica" in frag
+
+
+def test_system_prompt_fragment_custom_name(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    profile = up.UserProfile(address="Comandante")
+    frag = profile.system_prompt_fragment()
+    assert "Comandante" in frag
+
+
+def test_build_system_prompt_reads_profile(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.core.nova_router as router
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    up.UserProfile(address="Señora").save()
+    prompt = router._build_system_prompt()
+    assert "Señora" in prompt
+    assert "Señor'" not in prompt  # old default gone
+
+
+def test_cmd_perfil_view(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    up.UserProfile(address="Señora", notes="Doctora").save()
+    result = repl.cmd_perfil("")
+    assert "Señora" in result
+    assert "Doctora" in result
+
+
+def test_cmd_perfil_tratamiento(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+    up.UserProfile(address="Señor").save()
+    result = repl.cmd_perfil("tratamiento Comandante")
+    assert "Comandante" in result
+    loaded = up.UserProfile.load()
+    assert loaded.address == "Comandante"
+
+
+def test_cmd_perfil_in_slash_commands():
+    from nova.cli.repl import SLASH_COMMANDS
+    assert "/perfil" in SLASH_COMMANDS
+    assert "/profile" in SLASH_COMMANDS
+
+
+def test_onboarding_creates_profile(tmp_path, monkeypatch):
+    """_run_onboarding crea el perfil con las respuestas del usuario."""
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+
+    responses = iter(["Señora", "Desarrolladora Python"])
+
+    def fake_read(prompt=""):
+        return next(responses)
+
+    repl._run_onboarding(fake_read)
+    profile = up.UserProfile.load()
+    assert profile is not None
+    assert profile.address == "Señora"
+    assert "Python" in profile.notes
+
+
+def test_onboarding_enter_defaults_to_senor(tmp_path, monkeypatch):
+    import nova.core.nova_user_profile as up
+    import nova.cli.repl as repl
+    monkeypatch.setattr(up, "USERS_DIR", tmp_path / "users")
+
+    responses = iter(["", ""])  # Enter on both → defaults
+
+    def fake_read(prompt=""):
+        return next(responses)
+
+    repl._run_onboarding(fake_read)
+    profile = up.UserProfile.load()
+    assert profile.address == "Señor"

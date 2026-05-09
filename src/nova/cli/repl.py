@@ -1219,6 +1219,108 @@ def cmd_checkpoint(arg: str) -> Optional[str]:
     )
 
 
+# ─── PERFIL DE USUARIO ────────────────────────────────────────────────────────
+
+def cmd_perfil(arg: str) -> Optional[str]:
+    """
+    Ver y editar el perfil de usuario de Nova.
+
+    /perfil                           — ver perfil actual
+    /perfil tratamiento <Señor|...>   — cambiar cómo Nova te llama
+    /perfil nombre <nombre>           — guardar tu nombre
+    /perfil notas <texto>             — agregar contexto libre
+    /perfil notas                     — borrar notas
+    """
+    from nova.core.nova_user_profile import UserProfile
+    profile = UserProfile.load_or_default()
+
+    parts = arg.strip().split(maxsplit=1)
+    sub = parts[0].lower() if parts else ""
+    val = parts[1].strip() if len(parts) > 1 else ""
+
+    if not sub:
+        c = _ANSI
+        lines = [f"Perfil de usuario ({profile.id}):"]
+        lines.append(f"  Tratamiento : {profile.address}")
+        if profile.name:
+            lines.append(f"  Nombre      : {profile.name}")
+        if profile.notes:
+            lines.append(f"  Notas       : {profile.notes}")
+        lines.append(f"  Voz enrollada: {'Sí' if profile.voice_enrolled else 'No'}")
+        lines.append(f"\n{c['dim']}Cambiar: /perfil tratamiento Señora  |  /perfil notas texto libre{c['reset']}")
+        return "\n".join(lines)
+
+    if sub in ("tratamiento", "address", "llamarme"):
+        if not val:
+            return "Uso: /perfil tratamiento <Señor|Señora|nombre>"
+        profile.address = val
+        profile.save()
+        _apply_profile_to_router(profile)
+        return f"Ahora Nova te llamará '{val}'."
+
+    if sub in ("nombre", "name"):
+        profile.name = val
+        profile.save()
+        _apply_profile_to_router(profile)
+        return f"Nombre actualizado a '{val}'." if val else "Nombre borrado."
+
+    if sub in ("notas", "notes", "contexto"):
+        profile.notes = val
+        profile.save()
+        _apply_profile_to_router(profile)
+        return "Notas actualizadas." if val else "Notas borradas."
+
+    return "Uso: /perfil | /perfil tratamiento <texto> | /perfil nombre <texto> | /perfil notas <texto>"
+
+
+def _apply_profile_to_router(profile: object) -> None:
+    """Actualiza el system prompt del router activo con el perfil dado."""
+    global _router
+    if _router and _router is not False:
+        try:
+            from nova.core.nova_router import _build_system_prompt
+            _router.system_prompt = _build_system_prompt()
+        except Exception:
+            pass
+
+
+def _run_onboarding(read_fn) -> None:
+    """
+    Wizard de bienvenida para la primera vez que se usa Nova.
+    Hace 2 preguntas y guarda ~/.nova/users/default/profile.json.
+    """
+    from nova.core.nova_user_profile import UserProfile
+    c = _ANSI
+
+    print(f"\n{c['bold']}  Hola, soy Nova, tu asistente personal.{c['reset']}")
+    print(f"  Solo necesito saber una cosa antes de empezar.\n")
+
+    # Pregunta 1 — tratamiento
+    print(f"  ¿Cómo preferís que me dirija a vos?")
+    print(f"  {c['dim']}Opciones: Señor / Señora / tu nombre / o cualquier otra forma (Enter → Señor){c['reset']}")
+    raw = read_fn("  → ").strip()
+
+    if not raw:
+        address = "Señor"
+    elif raw.lower() in ("señor", "senor", "sr", "sr."):
+        address = "Señor"
+    elif raw.lower() in ("señora", "senora", "sra", "sra."):
+        address = "Señora"
+    else:
+        address = raw
+
+    # Pregunta 2 — contexto opcional
+    print(f"\n  ¿Hay algo que deba saber sobre vos para ayudarte mejor?")
+    print(f"  {c['dim']}Ej: 'Soy desarrollador Python' — Enter para saltar{c['reset']}")
+    notes = read_fn("  → ").strip()
+
+    profile = UserProfile(address=address, notes=notes)
+    profile.save()
+
+    print(f"\n  Perfecto, {address}. Podés cambiar esto en cualquier momento con /perfil")
+    print()
+
+
 SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     # ── Principales (español) ──────────────────────────────────────────────────
     "/ayuda":     (cmd_help,        "Lista de comandos"),
@@ -1250,6 +1352,8 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/mode":       (cmd_modo,        "→ /modo"),
     "/checkpoint": (cmd_checkpoint,  "Sesiones con nombre: /checkpoint [guardar|cargar|borrar|lista] <nombre>"),
     "/ckpt":       (cmd_checkpoint,  "→ /checkpoint"),
+    "/perfil":     (cmd_perfil,      "Perfil: /perfil · /perfil tratamiento Señora · /perfil notas <texto>"),
+    "/profile":    (cmd_perfil,      "→ /perfil"),
     "/export":    (cmd_exportar,    "→ /exportar"),
     "/history":   (cmd_historial,   "→ /historial"),
     "/routine":   (cmd_rutina,      "→ /rutina"),
@@ -1614,6 +1718,16 @@ def run() -> int:
     _ENV_CTX = _get_env_context()
     _print_banner(_ENV_CTX)
 
+    read = _make_reader()
+
+    # Onboarding primera vez (antes de lazy_init para que el router lea el perfil)
+    try:
+        from nova.core.nova_user_profile import UserProfile
+        if not UserProfile.exists():
+            _run_onboarding(read)
+    except Exception:
+        pass
+
     # Arrancar servidor Telegram Receive en background
     _lazy_init()
     try:
@@ -1627,8 +1741,6 @@ def run() -> int:
         n = len(_session_state["history"]) // 2
         c = _ANSI
         print(f"  {c['dim']}Sesión restaurada — {n} turno(s) en contexto  (/historial para ver · /limpiar para resetear){c['reset']}\n")
-
-    read = _make_reader()
 
     while True:
         try:
