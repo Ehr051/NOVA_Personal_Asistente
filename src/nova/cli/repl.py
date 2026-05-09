@@ -433,72 +433,118 @@ def cmd_doctor(arg: str) -> Optional[str]:
     lines = ["Diagnóstico Nova:\n"]
     _lazy_init()
     ok = "✓"; warn = "⚠"; err = "✗"
+    fixes_applied: list[str] = []
+    has_llm = False
 
-    # Router LLM
+    # ── LLM providers (los que Nova usa por defecto) ───────────────────────
+    _ENV_KEYS = {
+        "Groq":        ("GROQ_API_KEY",        "console.groq.com — 14.400 req/día gratis"),
+        "Cerebras":    ("CEREBRAS_API_KEY",     "cloud.cerebras.ai — 30 req/min gratis"),
+        "Mistral":     ("MISTRAL_API_KEY",      "console.mistral.ai — tier gratuito"),
+        "OpenRouter":  ("OPENROUTER_API_KEY",   "openrouter.ai — modelos gratuitos"),
+    }
+    for provider, (env_var, hint) in _ENV_KEYS.items():
+        val = os.getenv(env_var, "")
+        if val and len(val) > 8:
+            lines.append(f"  {ok} {provider:<12} — key configurada")
+            has_llm = True
+        else:
+            lines.append(f"  {warn} {provider:<12} — no configurado  ({env_var} en .env)")
+
+    # Ollama (local, no key)
+    _ollama_ok = False
+    try:
+        import urllib.request
+        urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=2)
+        lines.append(f"  {ok} Ollama       — conectado")
+        has_llm = True
+        _ollama_ok = True
+    except Exception:
+        lines.append(f"  {warn} Ollama       — no responde  (iniciá: ollama serve)")
+
+    if not has_llm:
+        lines.append(f"\n  {err} SIN PROVEEDOR LLM — Nova no puede responder. Configurá al menos una key.")
+
+    # ── .env ──────────────────────────────────────────────────────────────
+    from pathlib import Path
+    _env_path = Path(__file__).resolve().parents[3] / ".env"
+    if _env_path.exists():
+        lines.append(f"  {ok} .env         — encontrado ({_env_path})")
+    else:
+        lines.append(f"  {warn} .env         — no encontrado  (crea {_env_path} con tus keys)")
+        if fix_mode:
+            _stub = "# Nova — API Keys\n# Descomentá y completá las que tengas:\n"
+            _stub += "# GROQ_API_KEY=gsk_...\n# CEREBRAS_API_KEY=...\n# MISTRAL_API_KEY=...\n# OPENROUTER_API_KEY=...\n"
+            try:
+                _env_path.write_text(_stub, encoding="utf-8")
+                fixes_applied.append(f"  ✓ Creado .env stub en {_env_path}")
+            except Exception as exc:
+                fixes_applied.append(f"  ✗ No se pudo crear .env: {exc}")
+
+    # ── Daemon ────────────────────────────────────────────────────────────
+    try:
+        from nova.core.nova_client import get_client
+        _dc = get_client(auto_start=False)
+        if _dc.ping():
+            lines.append(f"  {ok} Daemon       — corriendo en :{_dc.port}")
+        else:
+            lines.append(f"  {warn} Daemon       — no corre  (arrancá: python -m nova.core.nova_daemon)")
+            if fix_mode:
+                _dc2 = get_client(auto_start=True)
+                if _dc2.ensure_daemon(wait=4.0):
+                    fixes_applied.append("  ✓ Daemon arrancado automáticamente")
+                else:
+                    fixes_applied.append("  ✗ No se pudo arrancar el daemon")
+    except Exception as exc:
+        lines.append(f"  {warn} Daemon       — error al verificar: {exc}")
+
+    # ── Memoria neuronal ──────────────────────────────────────────────────
+    if _neuro and _neuro is not False:
+        lines.append(f"  {ok} Memoria neuronal — activa")
+    else:
+        lines.append(f"  {err} Memoria neuronal — no disponible")
+        if fix_mode and not (_neuro and _neuro is not False):
+            try:
+                from nova.tools.nova_neuro_memory import NovaNeuroMemory
+                globals()["_neuro"] = NovaNeuroMemory()
+                fixes_applied.append("  ✓ Memoria neuronal reinicializada")
+            except Exception as exc:
+                fixes_applied.append(f"  ✗ Memoria no disponible: {exc}")
+
+    # ── Integraciones opcionales ──────────────────────────────────────────
+    try:
+        import socket as _sock
+        with _sock.create_connection(("127.0.0.1", 9876), timeout=1):
+            lines.append(f"  {ok} Blender MCP  — conectado en :9876")
+    except Exception:
+        lines.append(f"  {warn} Blender MCP  — no conectado  (Blender → addon MCP → Start Server)")
+
+    try:
+        import urllib.request as _ureq
+        _ureq.urlopen("http://localhost:5678/healthz", timeout=2)
+        lines.append(f"  {ok} n8n          — operativo en :5678")
+    except Exception:
+        lines.append(f"  {warn} n8n          — no responde  (opcional)")
+
+    # ── Router (infra interna) ────────────────────────────────────────────
     if _router and _router is not False:
         providers = getattr(_router, "provider_order", [])
         lines.append(f"  {ok} Router LLM  ({', '.join(providers) if providers else 'activo'})")
     else:
         lines.append(f"  {err} Router LLM  — no disponible")
         if fix_mode:
-            lines.append("     → intentando reiniciar router...")
             globals()["_router"] = None
             _lazy_init()
+            if _router and _router is not False:
+                fixes_applied.append("  ✓ Router reinicializado")
 
-    # Ollama
-    try:
-        import urllib.request
-        urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=2)
-        lines.append(f"  {ok} Ollama       — conectado")
-    except Exception:
-        lines.append(f"  {err} Ollama       — no responde  (iniciá con: ollama serve)")
+    # ── Resumen fix ───────────────────────────────────────────────────────
+    if fix_mode and fixes_applied:
+        lines.append("\n[--fix] Acciones aplicadas:")
+        lines.extend(fixes_applied)
+    elif fix_mode:
+        lines.append("\n[--fix] Sin acciones automáticas posibles. Revisá los ✗ y ⚠ manualmente.")
 
-    # Groq key
-    import os
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    if groq_key and not groq_key.startswith("gsk_..."):
-        lines.append(f"  {ok} Groq API key — configurada")
-    else:
-        lines.append(f"  {warn} Groq API key — no encontrada  (agregá GROQ_API_KEY en .env)")
-
-    # Anthropic / Claude
-    anthro_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if anthro_key:
-        lines.append(f"  {ok} Claude (Anthropic) — key configurada")
-    else:
-        lines.append(f"  {warn} Claude (Anthropic) — no configurado  (ANTHROPIC_API_KEY en .env)")
-
-    # OpenAI
-    oai_key = os.getenv("OPENAI_API_KEY", "")
-    if oai_key:
-        lines.append(f"  {ok} OpenAI — key configurada")
-    else:
-        lines.append(f"  {warn} OpenAI — no configurado  (OPENAI_API_KEY en .env)")
-
-    # Blender
-    try:
-        import socket
-        with socket.create_connection(("127.0.0.1", 9876), timeout=1):
-            lines.append(f"  {ok} Blender MCP  — conectado en :9876")
-    except Exception:
-        lines.append(f"  {warn} Blender MCP  — no conectado  (abrí Blender → addon MCP → Start Server)")
-
-    # n8n
-    try:
-        import urllib.request
-        urllib.request.urlopen("http://localhost:5678/healthz", timeout=2)
-        lines.append(f"  {ok} n8n          — operativo en :5678")
-    except Exception:
-        lines.append(f"  {warn} n8n          — no responde")
-
-    # Memoria neuronal
-    if _neuro and _neuro is not False:
-        lines.append(f"  {ok} Memoria neuronal — activa")
-    else:
-        lines.append(f"  {err} Memoria neuronal — no disponible")
-
-    if fix_mode:
-        lines.append("\n[--fix] Diagnóstico completado. Revisá los ✗ y ⚠ manualmente si persisten.")
     return "\n".join(lines)
 
 

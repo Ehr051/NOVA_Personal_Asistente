@@ -12,13 +12,13 @@ Memoria          ████████████████████ 10
 Código/Git       ████████████████████ 100%
 Docker/Deploy    ████████████████████ 100%
 HUD              ████████████████░░░░  80%  (falta modo pantalla completa)
-Tests            ████████████░░░░░░░░  60%  (faltan más smoke tests)
+Tests            ██████████████████░░  90%  (32 passed · 4 skipped opcionales)
 LSP semántico    ████████████████████ 100%  (jedi completo)
 Logging          ████████████████████ 100%  (novaesp.py limpio)
 Telegram full    ████████████████████ 100%  (polling + webhook n8n)
 OCR/Documentos   ████████████████████ 100%  (markitdown + pytesseract)
 Modo políglota   ████████████████████ 100%  (explícito: ES/EN/FR/PT/DE/RU/ZH)
-Cross-platform   ████████░░░░░░░░░░░░  40%  (installer .venv + uninstall)
+Cross-platform   ████████████████████ 100%  (macOS/Windows/Linux platform adapters completos)
 Streaming LLM    ████████████████████ 100%  (REPL + daemon, token-by-token)
 Tool calling     ████████████████████ 100%  (OpenAI JSON schema, 48 tools, agentic loop)
 Plugins/Web UI   ████████████████████ 100%  (plugin loader + Web UI SSE)
@@ -155,18 +155,11 @@ Daemon           ████████████████████ 10
 | — | **Qdrant SQLite cross-thread** | `__del__` de QdrantClient se llama desde GC thread ≠ creation thread. Fix real: monkey-patch `QdrantClient.__del__` tras `close()`. |
 | — | **Tests suite ampliada** | `python3.10 -m pytest -q` pasa ~13/4skip. Añadir smoke tests para LSP, OCR, daemon/streaming, políglota. |
 
-### 🟡 Media prioridad
-
-| # | Feature | Qué hay que hacer |
-|---|---|---|
-| — | **Tests suite ampliada** | Smoke tests para Web UI, plugin loader, daemon agent_stream, políglota. |
-
 ### 🟢 Baja prioridad
 
 | # | Feature | Qué hay que hacer |
 |---|---|---|
-| 10 | **Windows/Linux** | `src/nova/platform/` con `macos.py`, `windows.py`, `linux.py` + `adapter.py`. ~2-3 días. |
-| 13 | **GitHub público** | README + video demo 2min + badges. (GitHub Actions ya hecho) |
+| 13 | **GitHub público** | Video demo 2min + badges de CI/cobertura. (README y GitHub Actions ya hechos) |
 
 ---
 

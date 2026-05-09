@@ -478,14 +478,16 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             self._stream_agent(q)
 
         elif path == "/api/status":
-            _init_nova()
+            # No llama _init_nova() — responde instantáneamente con lo que esté listo
             from nova.tools.nova_plugin_loader import loaded_plugins
             data = {
+                "ok":        True,
                 "daemon":    _daemon is not None,
-                "router":    _router is not None,
+                "router":    _router is not None and _router is not False,
                 "providers": (
-                    _router._active_provider if _router and _router is not False else
-                    ("daemon" if _daemon else "none")
+                    _router._active_provider
+                    if _router and _router is not False
+                    else ("daemon" if _daemon else "not_initialized")
                 ),
                 "plugins": len(loaded_plugins()),
             }
@@ -647,6 +649,9 @@ def is_running() -> bool:
 
 
 def url() -> str:
+    if _server_instance is not None:
+        host, port = _server_instance.server_address
+        return f"http://{host}:{port}"
     return f"http://{NOVA_WEB_HOST}:{NOVA_WEB_PORT}"
 
 
