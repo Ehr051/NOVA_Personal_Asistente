@@ -15,7 +15,6 @@ if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
     source "$SCRIPT_DIR/.venv/bin/activate"
     PYTHON="$SCRIPT_DIR/.venv/bin/python"
 else
-    # Fallback: pyenv o sistema
     export PATH="$HOME/.pyenv/versions/3.10.6/bin:$PATH"
     PYTHON="python3"
     if ! command -v python3 &> /dev/null; then
