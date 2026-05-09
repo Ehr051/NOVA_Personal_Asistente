@@ -759,26 +759,28 @@ def listen(
         return None
 
     # ── Identificación de hablante (multi-usuario o single-user) ─────────────────
+    # MFCC corre en un executor para no bloquear el hilo de audio
     if _SPEAKER_VERIFY:
+        import concurrent.futures as _cf
         wav_bytes = audio.get_wav_data()
-        if _ALL_SPEAKER_PROFILES:
-            # Multi-user: identificar quién habla y cambiar usuario activo
-            identified = _identify_speaker(wav_bytes)
-            if identified is None:
-                hud.put_state(status="IDLE")
-                return None  # voz no reconocida → ignorar
-            try:
-                from nova.core.nova_user_profile import get_active_user_id, set_active_user
-                if identified != get_active_user_id():
-                    profile = set_active_user(identified)
-                    log.info("[Speaker] Usuario identificado: %s (%s)", identified, profile.address)
-            except Exception:
-                pass
-        else:
-            # Single-user legacy: verificar si es mi voz
-            if not _is_my_voice(wav_bytes):
-                hud.put_state(status="IDLE")
-                return None
+        with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
+            if _ALL_SPEAKER_PROFILES:
+                identified = _pool.submit(_identify_speaker, wav_bytes).result(timeout=3)
+                if identified is None:
+                    hud.put_state(status="IDLE")
+                    return None
+                try:
+                    from nova.core.nova_user_profile import get_active_user_id, set_active_user
+                    if identified != get_active_user_id():
+                        profile = set_active_user(identified)
+                        log.info("[Speaker] Usuario identificado: %s (%s)", identified, profile.address)
+                except Exception:
+                    pass
+            else:
+                ok = _pool.submit(_is_my_voice, wav_bytes).result(timeout=3)
+                if not ok:
+                    hud.put_state(status="IDLE")
+                    return None
 
     # Obtener texto con confianza (show_all=True para filtrar música/TV)
     try:
@@ -1091,6 +1093,18 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
             is_muted = False
             hud.put_state(status="IDLE")
             speak("A sus órdenes, Señor.", hud)
+            return
+
+        # ── Slash commands desde el HUD (mismos que el REPL) ────────────────
+        if text.strip().startswith("/"):
+            try:
+                from nova.cli.repl import _dispatch_slash
+                result = _dispatch_slash(text.strip())
+                if result:
+                    hud.put_state(status="SPEAKING", response_text=result)
+                    speak(result[:300], hud)  # limitar TTS para respuestas largas
+            except Exception as _se:
+                log.debug("[HUD] slash command error: %s", _se)
             return
 
         # ── Imagen adjunta desde el HUD (📎 botón) ───────────────────────────

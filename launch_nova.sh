@@ -23,10 +23,12 @@ mkdir -p ~/.nova
 # Modo debug: NOVA_DEBUG=1 ./launch_nova.sh  →  muestra output en terminal
 if [ "${NOVA_DEBUG:-0}" = "1" ]; then
     clear
-    echo "Nova — modo debug (logs en pantalla)"
+    echo "Nova — modo debug (logs en pantalla + ~/.nova/nova.log)"
+    export NOVA_LOG_LEVEL=DEBUG
+    export PYTHONUNBUFFERED=1
     exec "$PYTHON" main.py 2>&1 | tee -a ~/.nova/nova.log
 fi
 
 # Modo normal: logs a archivo, sin terminal visible
-# Si viene de Finder (sin TERM), lanzar directamente
+export PYTHONUNBUFFERED=1
 exec "$PYTHON" main.py >> ~/.nova/nova.log 2>&1
