@@ -616,6 +616,34 @@ def cmd_telegram(_: str) -> Optional[str]:
         return "Módulo nova_telegram_server no disponible."
 
 
+def cmd_webui(arg: str) -> Optional[str]:
+    """Interfaz web Nova: /webui [start|stop|status]"""
+    try:
+        from nova.web import nova_web_server as _ws
+    except ImportError as exc:
+        return f"Módulo nova_web_server no disponible: {exc}"
+
+    sub = arg.strip().lower()
+    if sub in ("stop", "detener", "parar"):
+        if _ws.is_running():
+            _ws.stop()
+            return "Servidor web detenido."
+        return "El servidor web no está corriendo."
+
+    if sub in ("status", "estado"):
+        if _ws.is_running():
+            return f"Servidor web activo en {_ws.url()}"
+        return "Servidor web detenido."
+
+    # start (default)
+    if _ws.is_running():
+        import webbrowser
+        webbrowser.open(_ws.url())
+        return f"Web UI ya activa en {_ws.url()} — abriendo navegador."
+    _ws.start(open_browser=(sub != "noopen"))
+    return f"Web UI iniciada en {_ws.url()} — abriendo navegador."
+
+
 # Comandos principales en español + aliases en inglés
 SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     # ── Principales (español) ──────────────────────────────────────────────────
@@ -638,6 +666,7 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/cerebro":   (cmd_cerebro,     "Buscar/listar en el vault Cerebro: /cerebro MAIRA"),
     "/reenroll":  (cmd_reenroll,    "Registrar perfil de voz (3 rondas guiadas, ~2 min)"),
     "/telegram":  (cmd_telegram,    "Estado del servidor Telegram Receive"),
+    "/webui":     (cmd_webui,       "Interfaz web: /webui [start|stop|status]"),
     # ── Aliases inglés (para compatibilidad) ──────────────────────────────────
     "/help":      (cmd_help,        "→ /ayuda"),
     "/exit":      (cmd_exit,        "→ /salir"),
