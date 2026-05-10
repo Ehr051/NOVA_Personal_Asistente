@@ -76,6 +76,7 @@ Con al menos una key Nova ya funciona. Ollama es opcional pero habilita modo com
 - **Agente autónomo** — `route_agentic()`: planifica, ejecuta tools en loop (Plan→Execute→Verify) y muestra el proceso en tiempo real, como Devin/Claude Code
 - **Web UI** — interfaz HTML/SSE en `localhost:8080` sin dependencias extra; modos Chat y Agente, streaming token a token, progress del agentic loop en tiempo real (`/webui` para activar)
 - **Plugin system** — agrega skills sin tocar el core: copiá `nova_plugin_tunombre.py` a `~/.nova/plugins/` con `INTENTS`, `TOOL_CATALOG` y un hook opcional `register(skills_module)`
+- **Universal Skill Bridge** — importa skills de cualquier agente (Claude, Hermes, GPT, OpenAI JSON schema, Python callable) y las convierte al formato de plugin de Nova automáticamente
 - **185 agentes especializados** — Firmware Engineer, Software Architect, AI Engineer, Backend Architect y más, ejecutados con proveedores gratuitos
 - **Modelado 3D en Blender** — genera scripts Python, los envía al addon MCP y auto-evalúa el resultado con visión
 - **Memoria neuronal persistente** — Mem0 + Qdrant + embeddings locales
@@ -164,11 +165,33 @@ src/nova/
 └── tools/
     ├── nova_skills.py           100+ skills · execute_tool() · skill_agente()
     ├── nova_tools_schemas.py    Auto-genera JSON schemas OpenAI-compatible desde _TOOL_CATALOG
+    ├── nova_skill_bridge.py     Universal Skill Bridge — importa skills de Claude/Hermes/GPT/OpenAI
     ├── nova_plugin_loader.py    Plugin system — carga nova_plugin_*.py desde ~/.nova/plugins/
     └── nova_neuro_memory.py     Mem0 + Qdrant + embeddings locales
 plugins/
-└── nova_plugin_example.py       Plantilla de plugin lista para copiar y adaptar
+├── nova_plugin_example.py       Plantilla de plugin lista para copiar y adaptar
+└── nova_plugin_apple.py         Apple ecosystem: iMessage, Reminders, Notes + Spotify
 ```
+
+### Universal Skill Bridge
+
+Importa skills de cualquier fuente y las convierte al formato Nova:
+
+```bash
+# Desde un archivo JSON (schema OpenAI / Hermes)
+python -m nova.tools.nova_skill_bridge install ruta/skill.json
+
+# Desde URL directa
+python -m nova.tools.nova_skill_bridge install https://example.com/skill.json
+
+# Ver skills instaladas
+python -m nova.tools.nova_skill_bridge list
+
+# Eliminar
+python -m nova.tools.nova_skill_bridge remove nombre_skill
+```
+
+Formatos soportados: **OpenAI function schema**, **Hermes skill format**, **Python callable**, **.py directo**.
 
 ### Variables de entorno opcionales
 
@@ -182,4 +205,23 @@ plugins/
 
 ---
 
-*Versión 3.9 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*
+## Roadmap
+
+### v3.10 ✅ (actual)
+- Universal Skill Bridge — importar skills de Claude, Hermes, GPT, OpenAI
+- Apple ecosystem plugin — iMessage, Reminders, Notes, Spotify
+- `/modelos` — listar todos los providers y modelos configurados por tier
+- Fix verificación de hablante (MFCC[0] excluido — soluciona falsos positivos)
+- Fix mem0/Qdrant crash en startup (KeyboardInterrupt durante init Pydantic en Python 3.10)
+- Fix logs de debug de rustls/h2/primp/duckduckgo en modo DEBUG
+
+### Próximo
+- **MCP Server** — exponer Nova como servidor MCP para que Claude Code, Cursor y otros agentes la usen como herramienta
+- **Git-aware** — Nova detecta el repo actual, lee diff, sugiere commits y entiende el contexto del proyecto
+- **LSP integration** — hover, go-to-definition y diagnostics en el REPL para edición de código
+- **Gesture detector UI** — reemplazar overlay OpenCV por ventana Qt nativa
+- **Subagentes paralelos** — ejecutar múltiples agentes especializados en paralelo y consolidar respuestas
+
+---
+
+*Versión 3.10 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*
