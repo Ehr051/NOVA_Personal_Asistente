@@ -2062,6 +2062,30 @@ def skill_cerebro_estado(_=None) -> str:
     return "Conector Cerebro no disponible, Señor."
 
 
+def skill_ver_modelos(_=None) -> str:
+    """Muestra los modelos LLM disponibles y cuál se está usando."""
+    if _router is None:
+        return "Router no disponible, Señor."
+    try:
+        summary = _router.get_session_summary() or {}
+        provider = getattr(_router, "_active_provider", None) or summary.get(
+            "active_providers", "desconocido"
+        )
+        tokens = summary.get("total_tokens", 0)
+        ollama_models = getattr(_router, "_ollama_models", {}) or {}
+        lines = [f"Usando {provider}. {tokens} tokens esta sesión."]
+        if ollama_models:
+            all_local = [m for lst in ollama_models.values() for m in lst]
+            # Deduplicar preservando orden
+            seen = set()
+            unique = [m for m in all_local if not (m in seen or seen.add(m))]
+            if unique:
+                lines.append(f"Modelos locales disponibles: {', '.join(unique[:5])}")
+        return " ".join(lines)
+    except Exception as e:
+        return f"Error consultando modelos: {e}"
+
+
 def skill_cerebro_que_se(query: str) -> str:
     """
     Busca en el Cerebro y devuelve un resumen de lo que Nova sabe sobre el tema.
@@ -3862,6 +3886,11 @@ _INTENTS: list[tuple] = [
     (r"(?:sincroniza|actualiza|sync|refresca)\s+"
      r"(?:el\s+)?(?:cerebro|vault|obsidian|memoria|notas)",                   sincroniza_cerebro, None),
     (r"(?:estado|status)\s+(?:del\s+)?cerebro",                               skill_cerebro_estado, None),
+    # ── Modelos LLM (qué modelos hay, cuál estás usando) ───────────────
+    (r"(?:qué\s+modelos?|cuál(?:es)?\s+modelo|qué\s+(?:ia|llm|modelo)\s+(?:usás?|tenés?))",
+                                                                              skill_ver_modelos, 0),
+    (r"(?:modelos?\s+disponibles?|qué\s+opciones?\s+de\s+(?:ia|modelo|llm))",
+                                                                              skill_ver_modelos, 0),
     (r"(?:qué\s+(?:sabes?|sab[eé]s?|ten[eé]s?|hay)\s+(?:sobre|acerca\s+de)\s+)(.+)",
                                                                               skill_cerebro_que_se, 1),
     (r"(?:busca(?:me)?|encontr[aá](?:me)?)\s+(?:en\s+el\s+)?cerebro\s+(.+)", obsidian_busca,      1),
@@ -4747,6 +4776,8 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_cambiar_idioma, "text"),
     "configurar_api":   ("Guardar una API key en el .env desde el chat (groq, openrouter, anthropic, etc.)",
                         skill_configurar_apikey, "text"),
+    "skill_modelos":    ("Ver qué modelos LLM están disponibles y cuál se está usando",
+                        skill_ver_modelos, None),
     "listar_plugins":   ("Ver plugins externos cargados en Nova",
                         lambda: __import__('nova.tools.nova_plugin_loader', fromlist=['plugin_status']).plugin_status(), None),
 }

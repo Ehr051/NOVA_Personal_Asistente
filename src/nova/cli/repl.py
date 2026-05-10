@@ -1538,6 +1538,109 @@ def cmd_ha(args: str) -> Optional[str]:
     )
 
 
+def cmd_modelos(args: str) -> Optional[str]:
+    """Lista todos los modelos LLM disponibles por proveedor y marca el activo."""
+    _lazy_init()
+    if not _router or _router is False:
+        return "Router no disponible."
+
+    try:
+        from nova.core.nova_router import (
+            CLAUDE_MODELS, GROQ_MODELS, OPENROUTER_MODELS,
+            CEREBRAS_MODELS, MISTRAL_MODELS, CODESTRAL_MODELS, DEEPSEEK_MODELS,
+        )
+    except Exception as e:
+        return f"No pude cargar las constantes de modelos: {e}"
+
+    # Proveedor(es) activo(s)
+    active_provider = getattr(_router, "_active_provider", "desconocido") or "desconocido"
+    provider_order  = getattr(_router, "provider_order", []) or []
+    primary = provider_order[0].lower() if provider_order else ""
+
+    summary = {}
+    try:
+        summary = _router.get_session_summary() or {}
+    except Exception:
+        summary = {}
+    total_tokens = summary.get("total_tokens", 0)
+    cost_usd     = summary.get("cost_usd", 0)
+
+    # Modelos Ollama detectados dinámicamente
+    ollama_models: dict = {}
+    try:
+        if hasattr(_router, "_ollama_models") and _router._ollama_models:
+            ollama_models = _router._ollama_models
+        elif hasattr(_router, "_detect_ollama_models"):
+            ollama_models = _router._detect_ollama_models() or {}
+    except Exception:
+        ollama_models = {}
+
+    # Modelo en uso actual por tier (heurística: tier 2 es el por defecto)
+    in_use_model = None
+    try:
+        if primary == "ollama" and ollama_models:
+            tier2 = ollama_models.get(2) or []
+            if tier2:
+                in_use_model = tier2[0]
+    except Exception:
+        pass
+
+    def _block(title: str, prov_key: str, models_by_tier: dict, hint: str = "") -> list[str]:
+        lines = []
+        is_active = (prov_key == primary) or (prov_key.lower() in active_provider.lower())
+        marker = "  <- activo" if is_active else ""
+        head = f"{title}{marker}"
+        if hint:
+            head += f"  ({hint})"
+        lines.append(head)
+        for tier in sorted(models_by_tier.keys()):
+            ms = models_by_tier.get(tier) or []
+            if not ms:
+                continue
+            for i, m in enumerate(ms):
+                tag = f"Tier {tier}: " if i == 0 else " " * 8
+                used = "  <- EN USO" if (is_active and m == in_use_model) else ""
+                lines.append(f"  {tag}{m}{used}")
+        return lines
+
+    out: list[str] = []
+    out.append("-- Modelos disponibles -----------------------------------")
+    out.append("")
+
+    if ollama_models and any(ollama_models.values()):
+        out.extend(_block("OLLAMA (local)", "ollama", ollama_models, "privado, gratuito"))
+        out.append("")
+    else:
+        out.append("OLLAMA (local) - no detectado (ollama serve no responde)")
+        out.append("")
+
+    out.extend(_block("GROQ (cloud)", "groq", GROQ_MODELS, "ultra rápido, free tier"))
+    out.append("")
+    out.extend(_block("ANTHROPIC (cloud)", "anthropic", CLAUDE_MODELS, "máxima calidad, paga"))
+    out.append("")
+    out.extend(_block("OPENROUTER (cloud)", "openrouter", OPENROUTER_MODELS, "100+ modelos, free tier"))
+    out.append("")
+    out.extend(_block("CEREBRAS (cloud)", "cerebras", CEREBRAS_MODELS, "ultra rápido, gratis"))
+    out.append("")
+    out.extend(_block("DEEPSEEK (cloud)", "deepseek", DEEPSEEK_MODELS, "barato, calidad GPT-4"))
+    out.append("")
+    out.extend(_block("MISTRAL (cloud)", "mistral", MISTRAL_MODELS, "free tier"))
+    out.append("")
+    out.extend(_block("CODESTRAL (cloud)", "codestral", CODESTRAL_MODELS, "código"))
+    out.append("")
+
+    out.append(f"Proveedor(es) activo(s): {active_provider}")
+    if provider_order:
+        out.append(f"Orden actual:            {' -> '.join(provider_order)}")
+    out.append(f"Tokens sesión:           {total_tokens}   Costo: ${cost_usd:.4f}")
+    out.append("")
+    out.append("Para forzar un proveedor: ROUTER_PROVIDER_ORDER=ollama,groq en .env")
+    out.append("Para forzar un modelo:    OLLAMA_MODEL_TIER2=qwen2.5:72b en .env")
+    out.append("Cambiar en caliente:      /modelo <proveedor>")
+    out.append("----------------------------------------------------------")
+    return "\n".join(out)
+
+
 SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     # ── Principales (español) ──────────────────────────────────────────────────
     "/ayuda":     (cmd_help,        "Lista de comandos"),
@@ -1553,6 +1656,8 @@ SLASH_COMMANDS: dict[str, tuple[Callable[[str], Optional[str]], str]] = {
     "/doctor":    (cmd_doctor,      "Diagnóstico del sistema  (--fix para reparar)"),
     "/logs":      (cmd_logs,        "Ver log del sistema: /logs [N líneas]"),
     "/modelo":    (cmd_modelo,      "Ver o cambiar proveedor: /modelo claude | local | gratis"),
+    "/modelos":   (cmd_modelos,     "Ver modelos LLM disponibles y cuál está en uso"),
+    "/models":    (cmd_modelos,     "Ver modelos LLM disponibles y cuál está en uso"),
     "/tarea":     (cmd_tarea,       "Orquestar tarea compleja con herramientas reales"),
     "/stats":     (cmd_stats,       "Estadísticas de uso de modelos LLM"),
     "/reiniciar": (cmd_reiniciar,   "Recargar módulos sin cerrar (aplica cambios de código)"),

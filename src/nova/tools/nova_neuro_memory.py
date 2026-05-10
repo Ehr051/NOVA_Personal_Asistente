@@ -27,7 +27,17 @@ try:
     if not getattr(_QdrantClient, "_nova_del_patched", False):
         _QdrantClient.__del__ = lambda self: None
         _QdrantClient._nova_del_patched = True
-except Exception:
+except BaseException:
+    # BaseException (not just Exception) to also catch KeyboardInterrupt raised
+    # by Pydantic v2 schema generation on Python 3.10 during qdrant_client import.
+    pass
+
+# Suppress mem0 telemetry atexit handler — it blocks shutdown and crashes on KeyboardInterrupt.
+try:
+    from mem0.memory import telemetry as _mem0_tel
+    if hasattr(_mem0_tel, "AnonymousTelemetry"):
+        _mem0_tel.AnonymousTelemetry.close = lambda self: None
+except BaseException:
     pass
 
 
@@ -411,5 +421,14 @@ class NovaNeuroMemory:
             log.warning("[Memoria] Error obteniendo turns recientes: %s", e)
             return []
 
-# Singleton instance
-neuro_memory = NovaNeuroMemory()
+# Singleton instance — protected from KeyboardInterrupt during slow qdrant/Pydantic init.
+try:
+    neuro_memory = NovaNeuroMemory()
+except BaseException as _e:
+    log.warning("[Memoria] Init interrumpida (%s) — usando memoria JSON simple.", type(_e).__name__)
+    _nm = object.__new__(NovaNeuroMemory)
+    _nm.user_id = "nova_user"
+    _nm.m = None
+    _nm._qdrant_lock = None
+    _nm._simple = _SimpleJSONMemory(os.path.expanduser("~/.nova/memory_simple.json"))
+    neuro_memory = _nm
