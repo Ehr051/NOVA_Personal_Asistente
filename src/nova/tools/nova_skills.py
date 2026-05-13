@@ -3579,9 +3579,12 @@ def skill_gestos_gui(_=None) -> str:
     """Abre la interfaz gráfica completa del detector de gestos."""
     import sys, subprocess
     from pathlib import Path as _Path
-    gui = _Path.home() / "Desktop" / "Detector-de-gestos" / "gui_app.py"
+    gui = _Path(__file__).parents[2] / "perception" / "gesture_detector" / "gui_qt.py"
     if not gui.exists():
-        return f"No encontré la GUI en {gui}, Señor."
+        # Fallback al viejo
+        gui = _Path.home() / "Desktop" / "Detector-de-gestos" / "gui_app.py"
+        if not gui.exists():
+            return f"No encontré la GUI en {gui}, Señor."
     try:
         subprocess.Popen([sys.executable, str(gui)],
                          cwd=str(gui.parent))

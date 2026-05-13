@@ -93,132 +93,161 @@ _HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nova</title>
+<title>NOVA | Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0a0e1a; --panel: #0f1525; --border: #1a2540;
-    --accent: #14c8ff; --accent2: #7c3aed; --text: #e2e8f0;
-    --muted: #64748b; --tool: #22c55e; --plan: #f59e0b;
-    --err: #ef4444; --radius: 12px; --font: 'Inter', system-ui, sans-serif;
+    --bg-base: #050508;
+    --glass-bg: rgba(15, 18, 28, 0.65);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --accent-cyan: #00f2fe;
+    --accent-blue: #4facfe;
+    --accent-purple: #9b51e0;
+    --text-primary: #f8fafc;
+    --text-muted: #94a3b8;
+    --tool-color: #10b981;
+    --plan-color: #f59e0b;
+    --err-color: #ef4444;
+    --radius: 16px;
+    --font-main: 'Outfit', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
   }
+  
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: var(--font);
-         display: flex; height: 100vh; overflow: hidden; }
+  
+  body {
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-main);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+  }
 
-  /* Sidebar */
-  #sidebar { width: 260px; background: var(--panel); border-right: 1px solid var(--border);
-             display: flex; flex-direction: column; overflow: hidden; flex-shrink: 0; }
-  #sidebar h1 { padding: 20px 16px 8px; font-size: 22px; font-weight: 700;
-                background: linear-gradient(90deg, var(--accent), var(--accent2));
-                -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-  #sidebar .subtitle { padding: 0 16px 16px; font-size: 11px; color: var(--muted); }
-  #status-box { margin: 0 12px 12px; padding: 10px 12px; background: #0a0e1a;
-                border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; }
-  #status-box .row { display: flex; justify-content: space-between; margin-bottom: 4px; }
-  #status-box .label { color: var(--muted); }
-  #status-box .val { color: var(--accent); font-weight: 600; }
-  #skills-list { flex: 1; overflow-y: auto; padding: 0 12px 12px; }
-  #skills-list h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
-                    color: var(--muted); margin-bottom: 8px; padding-top: 4px; }
-  .skill-item { padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
-                color: var(--muted); transition: all .15s; white-space: nowrap;
-                overflow: hidden; text-overflow: ellipsis; }
-  .skill-item:hover { background: var(--border); color: var(--text); }
-  .skill-item span { margin-right: 6px; }
-  #sidebar::-webkit-scrollbar, #skills-list::-webkit-scrollbar { width: 4px; }
-  #skills-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  body::before {
+    content: ''; position: absolute;
+    top: -50%; left: -50%; width: 200%; height: 200%;
+    background: radial-gradient(circle at 50% 50%, rgba(79, 172, 254, 0.12) 0%, rgba(0, 0, 0, 0) 50%),
+                radial-gradient(circle at 80% 20%, rgba(155, 81, 224, 0.12) 0%, rgba(0, 0, 0, 0) 40%);
+    z-index: -1; animation: pulseGlow 15s ease-in-out infinite alternate;
+  }
+  @keyframes pulseGlow {
+    0% { transform: scale(1) translate(0, 0); }
+    100% { transform: scale(1.1) translate(-2%, 2%); }
+  }
 
-  /* Main */
-  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  #messages { flex: 1; overflow-y: auto; padding: 24px 32px; display: flex;
-              flex-direction: column; gap: 16px; }
-  #messages::-webkit-scrollbar { width: 6px; }
-  #messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  #sidebar {
+    width: 280px; background: var(--glass-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid var(--glass-border); display: flex; flex-direction: column; flex-shrink: 0;
+    box-shadow: 5px 0 30px rgba(0,0,0,0.5); z-index: 10;
+  }
+  #sidebar h1 {
+    padding: 30px 20px 5px; font-size: 28px; font-weight: 700; letter-spacing: 1px;
+    background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  #sidebar .subtitle { padding: 0 20px 25px; font-size: 12px; color: var(--text-muted); font-weight: 300; letter-spacing: 0.5px; }
+  
+  #status-box {
+    margin: 0 20px 20px; padding: 15px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border);
+    border-radius: var(--radius); font-size: 12px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
+  }
+  #status-box .row { display: flex; justify-content: space-between; margin-bottom: 8px; }
+  #status-box .row:last-child { margin-bottom: 0; }
+  #status-box .label { color: var(--text-muted); font-weight: 400; }
+  #status-box .val { color: var(--accent-cyan); font-weight: 600; text-shadow: 0 0 5px rgba(0,242,254,0.4); }
+  
+  #skills-list { flex: 1; overflow-y: auto; padding: 0 20px 20px; }
+  #skills-list h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-muted); margin-bottom: 12px; }
+  .skill-item {
+    padding: 10px 14px; margin-bottom: 8px; border-radius: 10px; font-size: 13px; cursor: pointer;
+    background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; color: var(--text-primary);
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .skill-item:hover {
+    background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15);
+    transform: translateX(4px); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
+  .skill-item span { color: var(--accent-purple); margin-right: 8px; font-weight: bold; }
 
-  .msg { max-width: 72%; padding: 12px 16px; border-radius: var(--radius); line-height: 1.6;
-         font-size: 14px; word-wrap: break-word; white-space: pre-wrap; }
-  .msg.user { align-self: flex-end; background: var(--accent2);
-              border-bottom-right-radius: 4px; color: #fff; }
-  .msg.nova  { align-self: flex-start; background: var(--panel);
-               border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-  .msg.nova .who { font-size: 11px; font-weight: 700; color: var(--accent);
-                   margin-bottom: 6px; letter-spacing: .06em; }
-  .msg.system { align-self: center; background: transparent; color: var(--muted);
-                font-size: 12px; font-style: italic; padding: 4px 0; }
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+  #messages { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; gap: 24px; scroll-behavior: smooth; }
+  
+  .msg {
+    max-width: 75%; padding: 16px 20px; border-radius: 20px; line-height: 1.6; font-size: 15px;
+    word-wrap: break-word; white-space: pre-wrap; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    animation: slideUp 0.3s ease-out forwards; opacity: 0; transform: translateY(10px);
+  }
+  @keyframes slideUp { to { opacity: 1; transform: translateY(0); } }
+  
+  .msg.user { align-self: flex-end; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); border-bottom-right-radius: 4px; color: #fff; }
+  .msg.nova { align-self: flex-start; background: var(--glass-bg); backdrop-filter: blur(10px); border: 1px solid var(--glass-border); border-bottom-left-radius: 4px; }
+  .msg.nova .who { font-size: 11px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase; }
+  
+  .msg.system { align-self: center; background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 300; padding: 8px 16px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05); box-shadow: none; }
 
-  /* Agent progress */
-  .msg.agent { align-self: flex-start; background: #0a1020;
-               border: 1px solid #1e3a5f; border-bottom-left-radius: 4px;
-               max-width: 82%; font-family: monospace; font-size: 13px; }
-  .msg.agent .who { font-size: 11px; font-weight: 700; color: var(--plan);
-                    margin-bottom: 8px; letter-spacing: .06em; }
-  .plan-line  { color: var(--plan); }
-  .tool-line  { color: var(--tool); }
-  .result-line { color: var(--muted); padding-left: 16px; }
-  .final-line { color: var(--text); border-top: 1px solid var(--border);
-                margin-top: 10px; padding-top: 10px; }
+  .msg.agent { align-self: flex-start; background: rgba(10, 15, 25, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(79, 172, 254, 0.3); border-bottom-left-radius: 4px; max-width: 85%; font-family: var(--font-mono); font-size: 13px; box-shadow: 0 0 20px rgba(79, 172, 254, 0.05); }
+  .msg.agent .who { font-family: var(--font-main); font-size: 11px; font-weight: 700; color: var(--plan-color); margin-bottom: 12px; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
+  .plan-line { color: var(--plan-color); font-weight: 600; margin-bottom: 4px; }
+  .tool-line { color: var(--tool-color); margin-left: 8px; }
+  .result-line { color: var(--text-muted); margin-left: 16px; font-style: italic; }
+  .final-line { color: #fff; border-top: 1px solid var(--glass-border); margin-top: 12px; padding-top: 12px; font-family: var(--font-main); font-weight: 400; }
 
-  /* Input area */
-  #input-area { padding: 16px 32px 20px; border-top: 1px solid var(--border);
-                background: var(--panel); display: flex; flex-direction: column; gap: 10px; }
-  #mode-row { display: flex; gap: 8px; align-items: center; }
-  .mode-btn { padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600;
-              border: 1px solid var(--border); cursor: pointer; transition: all .15s;
-              background: transparent; color: var(--muted); }
-  .mode-btn.active { background: var(--accent); border-color: var(--accent); color: #000; }
-  .mode-btn.active.agent-mode { background: var(--plan); border-color: var(--plan); }
-  #char-count { margin-left: auto; font-size: 11px; color: var(--muted); }
-  #input-row { display: flex; gap: 10px; align-items: flex-end; }
-  #input { flex: 1; background: #0a0e1a; border: 1px solid var(--border);
-           border-radius: var(--radius); padding: 12px 16px; color: var(--text);
-           font-family: var(--font); font-size: 14px; resize: none; min-height: 48px;
-           max-height: 140px; outline: none; transition: border-color .15s; line-height: 1.5; }
-  #input:focus { border-color: var(--accent); }
-  #send { background: var(--accent); color: #000; border: none; border-radius: var(--radius);
-          width: 48px; height: 48px; cursor: pointer; font-size: 18px; flex-shrink: 0;
-          transition: opacity .15s; display: flex; align-items: center; justify-content: center; }
-  #send:disabled { opacity: .35; cursor: not-allowed; }
-  #send.agent-mode { background: var(--plan); }
+  #input-area { padding: 20px 40px 30px; background: rgba(10, 13, 20, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 12px; z-index: 10; }
+  #mode-row { display: flex; gap: 12px; align-items: center; }
+  .mode-btn { padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; font-family: var(--font-main); border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.3s ease; background: rgba(255,255,255,0.02); color: var(--text-muted); }
+  .mode-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  .mode-btn.active { background: rgba(0, 242, 254, 0.15); border-color: var(--accent-cyan); color: var(--accent-cyan); box-shadow: 0 0 15px rgba(0, 242, 254, 0.2); }
+  .mode-btn.active.agent-mode { background: rgba(245, 158, 11, 0.15); border-color: var(--plan-color); color: var(--plan-color); box-shadow: 0 0 15px rgba(245, 158, 11, 0.2); }
+  #char-count { margin-left: auto; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+  
+  #input-row { display: flex; gap: 16px; align-items: flex-end; }
+  #input { flex: 1; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 16px 20px; color: #fff; font-family: var(--font-main); font-size: 15px; resize: none; min-height: 54px; max-height: 150px; outline: none; transition: all 0.3s ease; line-height: 1.5; box-shadow: inset 0 2px 5px rgba(0,0,0,0.2); }
+  #input:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 2px rgba(0, 242, 254, 0.1), inset 0 2px 5px rgba(0,0,0,0.2); }
+  #send { background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue)); color: #000; border: none; border-radius: 50%; width: 54px; height: 54px; cursor: pointer; font-size: 20px; flex-shrink: 0; transition: transform 0.2s, opacity 0.2s, box-shadow 0.2s; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4); }
+  #send:hover { transform: scale(1.05); }
+  #send:active { transform: scale(0.95); }
+  #send:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+  #send.agent-mode { background: linear-gradient(135deg, #f6d365, #fda085); box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); }
 
-  /* Cursor blink */
-  .cursor { display: inline-block; width: 2px; height: 1em; background: var(--accent);
-            animation: blink .7s infinite; vertical-align: text-bottom; margin-left: 1px; }
-  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .cursor { display: inline-block; width: 3px; height: 1.1em; background: var(--accent-cyan); animation: blink 0.8s infinite; vertical-align: middle; margin-left: 4px; border-radius: 2px; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
-  /* Scrollbar global */
-  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px; border: 2px solid var(--bg-base); }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 </style>
 </head>
 <body>
 
 <div id="sidebar">
-  <h1>Nova</h1>
-  <div class="subtitle">Asistente Personal Inteligente</div>
+  <h1>NOVA</h1>
+  <div class="subtitle">Personal Assistant Core</div>
   <div id="status-box">
     <div class="row"><span class="label">Estado</span><span class="val" id="s-status">—</span></div>
     <div class="row"><span class="label">Proveedor</span><span class="val" id="s-provider">—</span></div>
     <div class="row"><span class="label">Plugins</span><span class="val" id="s-plugins">—</span></div>
   </div>
   <div id="skills-list">
-    <h3>Skills</h3>
+    <h3>Catálogo de Skills</h3>
     <div id="skills-inner"></div>
   </div>
 </div>
 
 <div id="main">
   <div id="messages">
-    <div class="msg system">Nova Web UI — escribí tu consulta o activá el modo Agente</div>
+    <div class="msg system">Nova Web Interface (Premium UI) — Sesión iniciada</div>
   </div>
   <div id="input-area">
     <div id="mode-row">
-      <button class="mode-btn active" id="btn-chat" onclick="setMode('chat')">💬 Chat</button>
-      <button class="mode-btn" id="btn-agent" onclick="setMode('agent')">🤖 Agente</button>
+      <button class="mode-btn active" id="btn-chat" onclick="setMode('chat')">💬 Modo Chat</button>
+      <button class="mode-btn" id="btn-agent" onclick="setMode('agent')">🤖 Modo Autónomo</button>
       <span id="char-count"></span>
     </div>
     <div id="input-row">
-      <textarea id="input" placeholder="Preguntá algo…" rows="1"></textarea>
+      <textarea id="input" placeholder="Ingresa tu directiva..." rows="1"></textarea>
       <button id="send" onclick="sendMsg()">↑</button>
     </div>
   </div>
@@ -235,19 +264,19 @@ function setMode(m) {
   document.getElementById('btn-agent').classList.toggle('agent-mode', m === 'agent');
   document.getElementById('send').classList.toggle('agent-mode', m === 'agent');
   document.getElementById('input').placeholder =
-    m === 'agent' ? 'Describí el objetivo del agente…' : 'Preguntá algo…';
+    m === 'agent' ? 'Establece el objetivo autónomo...' : 'Ingresa tu directiva...';
 }
 
 function autoResize(el) {
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+  el.style.height = Math.min(el.scrollHeight, 150) + 'px';
 }
 
 const inp = document.getElementById('input');
 inp.addEventListener('input', () => {
   autoResize(inp);
   const n = inp.value.length;
-  document.getElementById('char-count').textContent = n > 0 ? n + ' chars' : '';
+  document.getElementById('char-count').textContent = n > 0 ? n + ' caracteres' : '';
 });
 inp.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
@@ -276,7 +305,7 @@ function addAgentMsg() {
   const msgs = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = 'msg agent';
-  div.innerHTML = '<div class="who">⚙️ AGENTE</div>';
+  div.innerHTML = '<div class="who">🤖 AGENTE AUTÓNOMO</div>';
   const body = document.createElement('div');
   body.className = 'body';
   div.appendChild(body);
@@ -325,7 +354,7 @@ function sendMsg() {
 }
 
 function streamChat(q) {
-  const body = addMsg('nova', '', 'NOVA');
+  const body = addMsg('nova', '', 'NOVA AI');
   const cursor = document.createElement('span');
   cursor.className = 'cursor'; body.appendChild(cursor);
 
@@ -359,10 +388,9 @@ function streamAgent(q) {
       renderAgentLine(body, '❌ ' + e.data.slice(5));
       es.close(); setBusy(false); return;
     }
-    // Accumulate into lines
     buf += e.data;
     const lines = buf.split('\n');
-    buf = lines.pop(); // incomplete last line stays in buf
+    buf = lines.pop(); 
     for (const l of lines) {
       if (l.trim()) renderAgentLine(body, l);
     }
@@ -371,17 +399,13 @@ function streamAgent(q) {
   es.onerror = () => { es.close(); setBusy(false); };
 }
 
-// Load status + skills on boot
 async function loadStatus() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    document.getElementById('s-status').textContent =
-      d.daemon ? 'daemon ✓' : (d.router ? 'router ✓' : '✗');
-    document.getElementById('s-provider').textContent =
-      d.providers || '—';
-    document.getElementById('s-plugins').textContent =
-      (d.plugins || 0) + ' cargados';
+    document.getElementById('s-status').textContent = d.daemon ? 'Online' : (d.router ? 'Router' : 'Offline');
+    document.getElementById('s-provider').textContent = d.providers || '—';
+    document.getElementById('s-plugins').textContent = (d.plugins || 0) + ' Cargados';
   } catch(e) {}
 }
 
@@ -395,7 +419,7 @@ async function loadSkills() {
       const div = document.createElement('div');
       div.className = 'skill-item';
       div.title = v;
-      div.innerHTML = `<span>▸</span>${k}`;
+      div.innerHTML = `<span>⚡</span>${k}`;
       div.onclick = () => {
         inp.value = k.replace(/_/g,' ');
         inp.focus();
