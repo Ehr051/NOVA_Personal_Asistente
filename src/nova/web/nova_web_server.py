@@ -1,31 +1,7 @@
 """
 nova_web_server.py
 ───────────────────
-REPL web de Nova en localhost — interfaz de chat en el navegador.
-
-Características:
-  • Chat streaming token a token via SSE
-  • Modo agente autónomo: muestra plan + tool calls + resultado en tiempo real
-  • Panel lateral con skills disponibles y estado del sistema
-  • Tema oscuro coherente con la identidad visual de Nova
-
-Lanzamiento:
-  python -m nova.web.nova_web_server        # puerto 8080 (default)
-  NOVA_WEB_PORT=9090 python -m nova.web.nova_web_server
-
-Desde el REPL:
-  /webui           → abre en el navegador
-  /webui start     → solo inicia el servidor
-  /webui stop      → detiene el servidor
-
-Protocolo:
-  GET  /                 → HTML SPA
-  GET  /stream?q=...     → SSE: chat streaming (usa daemon o router directo)
-  GET  /agent?q=...      → SSE: agentic loop — plan, tool calls, resultado
-  GET  /api/status       → JSON estado del sistema
-  GET  /api/skills       → JSON lista de skills
-  GET  /api/history      → JSON historial de la sesión web
-  POST /api/clear        → limpia historial
+REPL web de Nova en localhost — interfaz de chat y Dashboard de Configuración.
 """
 from __future__ import annotations
 
@@ -45,19 +21,19 @@ log = logging.getLogger("nova_web")
 NOVA_WEB_PORT = int(os.getenv("NOVA_WEB_PORT", "8080"))
 NOVA_WEB_HOST = os.getenv("NOVA_WEB_HOST", "127.0.0.1")
 
-# Añadir src al path si se ejecuta directamente
 _SRC = Path(__file__).resolve().parents[2]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-# ─── Inicialización lazy de Nova ──────────────────────────────────────────────
+ENV_PATH = _SRC.parent / ".env"
+PLUGINS_DIR = _SRC.parent / "plugins"
+MCP_CONFIG_PATH = _SRC.parent / ".mcp.json"
 
 _router   = None
 _skills   = None
 _daemon   = None
 _history: list[dict] = []
 _init_lock = threading.Lock()
-
 
 def _init_nova() -> None:
     global _router, _skills, _daemon
@@ -66,7 +42,7 @@ def _init_nova() -> None:
             return
         try:
             from dotenv import load_dotenv
-            load_dotenv(str(_SRC.parent / ".env"))
+            load_dotenv(str(ENV_PATH))
         except Exception:
             pass
         try:
@@ -85,201 +61,438 @@ def _init_nova() -> None:
         except Exception as e:
             log.warning("Router init parcial: %s", e)
 
-
 # ─── HTML ─────────────────────────────────────────────────────────────────────
 
-_HTML = r"""<!DOCTYPE html>
+_HTML = r'''<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NOVA | Command Center</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<title>NOVA Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<!-- Markdown & Highlighting -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <style>
   :root {
-    --bg-base: #050508;
-    --glass-bg: rgba(15, 18, 28, 0.65);
-    --glass-border: rgba(255, 255, 255, 0.08);
-    --accent-cyan: #00f2fe;
-    --accent-blue: #4facfe;
-    --accent-purple: #9b51e0;
-    --text-primary: #f8fafc;
-    --text-muted: #94a3b8;
-    --tool-color: #10b981;
-    --plan-color: #f59e0b;
-    --err-color: #ef4444;
-    --radius: 16px;
-    --font-main: 'Outfit', sans-serif;
-    --font-mono: 'JetBrains Mono', monospace;
+    --bg-base: #1e1e24; --bg-panel: #25252b; --bg-msg: #2d2d34;
+    --border: #3b3b44; --accent: #10a37f; --accent-hover: #0d8a6a;
+    --text-primary: #ececf1; --text-muted: #8e8ea0;
+    --plan-color: #f59e0b; --tool-color: #3b82f6; --error-color: #ef4444;
+    --plugin-color: #9b51e0; --mcp-color: #ef4444;
+    --font-main: 'Inter', system-ui, sans-serif; --font-mono: 'JetBrains Mono', monospace;
   }
   
   * { box-sizing: border-box; margin: 0; padding: 0; }
   
-  body {
-    background: var(--bg-base);
-    color: var(--text-primary);
-    font-family: var(--font-main);
-    display: flex;
-    height: 100vh;
-    overflow: hidden;
-    position: relative;
-  }
+  body { background: var(--bg-base); color: var(--text-primary); font-family: var(--font-main); display: flex; height: 100vh; overflow: hidden; }
 
-  body::before {
-    content: ''; position: absolute;
-    top: -50%; left: -50%; width: 200%; height: 200%;
-    background: radial-gradient(circle at 50% 50%, rgba(79, 172, 254, 0.12) 0%, rgba(0, 0, 0, 0) 50%),
-                radial-gradient(circle at 80% 20%, rgba(155, 81, 224, 0.12) 0%, rgba(0, 0, 0, 0) 40%);
-    z-index: -1; animation: pulseGlow 15s ease-in-out infinite alternate;
-  }
-  @keyframes pulseGlow {
-    0% { transform: scale(1) translate(0, 0); }
-    100% { transform: scale(1.1) translate(-2%, 2%); }
-  }
-
-  #sidebar {
-    width: 280px; background: var(--glass-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border-right: 1px solid var(--glass-border); display: flex; flex-direction: column; flex-shrink: 0;
-    box-shadow: 5px 0 30px rgba(0,0,0,0.5); z-index: 10;
-  }
-  #sidebar h1 {
-    padding: 30px 20px 5px; font-size: 28px; font-weight: 700; letter-spacing: 1px;
-    background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-  }
-  #sidebar .subtitle { padding: 0 20px 25px; font-size: 12px; color: var(--text-muted); font-weight: 300; letter-spacing: 0.5px; }
+  /* Sidebar */
+  #sidebar { width: 260px; background: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 10; }
+  .brand { padding: 24px 20px 10px; font-size: 24px; font-weight: 700; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
+  .subtitle { padding: 0 20px 20px; font-size: 12px; color: var(--text-muted); }
   
-  #status-box {
-    margin: 0 20px 20px; padding: 15px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border);
-    border-radius: var(--radius); font-size: 12px; box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
-  }
-  #status-box .row { display: flex; justify-content: space-between; margin-bottom: 8px; }
-  #status-box .row:last-child { margin-bottom: 0; }
-  #status-box .label { color: var(--text-muted); font-weight: 400; }
-  #status-box .val { color: var(--accent-cyan); font-weight: 600; text-shadow: 0 0 5px rgba(0,242,254,0.4); }
-  
-  #skills-list { flex: 1; overflow-y: auto; padding: 0 20px 20px; }
-  #skills-list h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-muted); margin-bottom: 12px; }
-  .skill-item {
-    padding: 10px 14px; margin-bottom: 8px; border-radius: 10px; font-size: 13px; cursor: pointer;
-    background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; color: var(--text-primary);
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .skill-item:hover {
-    background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.15);
-    transform: translateX(4px); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-  }
-  .skill-item span { color: var(--accent-purple); margin-right: 8px; font-weight: bold; }
+  .nav-menu { flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+  .nav-item { padding: 12px 16px; border-radius: 8px; cursor: pointer; color: var(--text-muted); font-size: 14px; font-weight: 500; transition: all 0.2s; display: flex; align-items: center; gap: 10px; }
+  .nav-item:hover { background: rgba(255,255,255,0.05); color: var(--text-primary); }
+  .nav-item.active { background: rgba(16, 163, 127, 0.15); color: var(--accent); }
 
-  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-  #messages { flex: 1; overflow-y: auto; padding: 40px; display: flex; flex-direction: column; gap: 24px; scroll-behavior: smooth; }
-  
-  .msg {
-    max-width: 75%; padding: 16px 20px; border-radius: 20px; line-height: 1.6; font-size: 15px;
-    word-wrap: break-word; white-space: pre-wrap; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    animation: slideUp 0.3s ease-out forwards; opacity: 0; transform: translateY(10px);
-  }
-  @keyframes slideUp { to { opacity: 1; transform: translateY(0); } }
-  
-  .msg.user { align-self: flex-end; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); border-bottom-right-radius: 4px; color: #fff; }
-  .msg.nova { align-self: flex-start; background: var(--glass-bg); backdrop-filter: blur(10px); border: 1px solid var(--glass-border); border-bottom-left-radius: 4px; }
-  .msg.nova .who { font-size: 11px; font-weight: 700; color: var(--accent-cyan); margin-bottom: 8px; letter-spacing: 1px; text-transform: uppercase; }
-  
-  .msg.system { align-self: center; background: transparent; color: var(--text-muted); font-size: 13px; font-weight: 300; padding: 8px 16px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.05); box-shadow: none; }
+  /* Main Area */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; background: var(--bg-base); }
+  .view { display: none; flex-direction: column; height: 100%; width: 100%; }
+  .view.active { display: flex; }
 
-  .msg.agent { align-self: flex-start; background: rgba(10, 15, 25, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(79, 172, 254, 0.3); border-bottom-left-radius: 4px; max-width: 85%; font-family: var(--font-mono); font-size: 13px; box-shadow: 0 0 20px rgba(79, 172, 254, 0.05); }
-  .msg.agent .who { font-family: var(--font-main); font-size: 11px; font-weight: 700; color: var(--plan-color); margin-bottom: 12px; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
-  .plan-line { color: var(--plan-color); font-weight: 600; margin-bottom: 4px; }
-  .tool-line { color: var(--tool-color); margin-left: 8px; }
-  .result-line { color: var(--text-muted); margin-left: 16px; font-style: italic; }
-  .final-line { color: #fff; border-top: 1px solid var(--glass-border); margin-top: 12px; padding-top: 12px; font-family: var(--font-main); font-weight: 400; }
-
-  #input-area { padding: 20px 40px 30px; background: rgba(10, 13, 20, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 12px; z-index: 10; }
-  #mode-row { display: flex; gap: 12px; align-items: center; }
-  .mode-btn { padding: 6px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; font-family: var(--font-main); border: 1px solid rgba(255,255,255,0.1); cursor: pointer; transition: all 0.3s ease; background: rgba(255,255,255,0.02); color: var(--text-muted); }
-  .mode-btn:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .mode-btn.active { background: rgba(0, 242, 254, 0.15); border-color: var(--accent-cyan); color: var(--accent-cyan); box-shadow: 0 0 15px rgba(0, 242, 254, 0.2); }
-  .mode-btn.active.agent-mode { background: rgba(245, 158, 11, 0.15); border-color: var(--plan-color); color: var(--plan-color); box-shadow: 0 0 15px rgba(245, 158, 11, 0.2); }
-  #char-count { margin-left: auto; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+  /* Chat View */
+  #messages { flex: 1; overflow-y: auto; padding: 40px 15%; display: flex; flex-direction: column; gap: 24px; scroll-behavior: smooth; }
   
-  #input-row { display: flex; gap: 16px; align-items: flex-end; }
-  #input { flex: 1; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 16px 20px; color: #fff; font-family: var(--font-main); font-size: 15px; resize: none; min-height: 54px; max-height: 150px; outline: none; transition: all 0.3s ease; line-height: 1.5; box-shadow: inset 0 2px 5px rgba(0,0,0,0.2); }
-  #input:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 2px rgba(0, 242, 254, 0.1), inset 0 2px 5px rgba(0,0,0,0.2); }
-  #send { background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue)); color: #000; border: none; border-radius: 50%; width: 54px; height: 54px; cursor: pointer; font-size: 20px; flex-shrink: 0; transition: transform 0.2s, opacity 0.2s, box-shadow 0.2s; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4); }
-  #send:hover { transform: scale(1.05); }
-  #send:active { transform: scale(0.95); }
-  #send:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
-  #send.agent-mode { background: linear-gradient(135deg, #f6d365, #fda085); box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4); }
+  .msg { padding: 0; line-height: 1.6; font-size: 15px; width: 100%; display: flex; gap: 16px; }
+  .msg-avatar { width: 30px; height: 30px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; flex-shrink: 0; }
+  .msg.user .msg-avatar { background: #5536d6; color: white; }
+  .msg.nova .msg-avatar { background: var(--accent); color: white; }
+  .msg.agent .msg-avatar { background: var(--plan-color); color: white; }
+  
+  .msg-content { flex: 1; overflow: hidden; }
+  .msg.user .msg-content { font-weight: 500; }
+  .msg.system { justify-content: center; color: var(--text-muted); font-size: 13px; text-align: center; font-style: italic; }
 
-  .cursor { display: inline-block; width: 3px; height: 1.1em; background: var(--accent-cyan); animation: blink 0.8s infinite; vertical-align: middle; margin-left: 4px; border-radius: 2px; }
-  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  /* Agentic Loop Styling */
+  .agent-block { background: var(--bg-msg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: var(--font-mono); font-size: 13px; color: var(--text-muted); }
+  .plan-line { color: var(--plan-color); margin-bottom: 8px; font-weight: 600; font-family: var(--font-main); }
+  .tool-line { color: var(--tool-color); margin-top: 4px; }
+  .result-line { margin-left: 12px; font-style: italic; }
+  .final-line { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--text-primary); font-family: var(--font-main); font-size: 14px; }
 
+  /* Markdown Styles */
+  .markdown-body pre { background: #0d1117; padding: 12px; border-radius: 6px; overflow-x: auto; margin: 10px 0; position: relative; }
+  .markdown-body code { font-family: var(--font-mono); font-size: 13px; }
+  .markdown-body p code { background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 4px; }
+  .markdown-body ul, .markdown-body ol { margin-left: 20px; margin-bottom: 10px; }
+  .markdown-body table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+  .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 8px; text-align: left; }
+  
+  .copy-btn { position: absolute; top: 8px; right: 8px; background: rgba(255,255,255,0.1); border: none; color: white; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  .copy-btn:hover { background: rgba(255,255,255,0.2); }
+
+  /* Typing Indicator */
+  .typing-indicator { display: flex; gap: 4px; align-items: center; height: 24px; }
+  .typing-indicator span { width: 6px; height: 6px; background-color: var(--accent); border-radius: 50%; animation: typing 1.4s infinite ease-in-out both; }
+  .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+  .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+  @keyframes typing { 0%, 80%, 100% { transform: scale(0); opacity: 0.5; } 40% { transform: scale(1); opacity: 1; } }
+
+  /* Input Area */
+  #input-area { padding: 20px 15% 30px; background: var(--bg-base); border-top: 1px solid transparent; display: flex; flex-direction: column; gap: 12px; }
+  .input-wrapper { display: flex; align-items: flex-end; background: var(--bg-msg); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; transition: border-color 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+  .input-wrapper:focus-within { border-color: var(--accent); }
+  
+  #input { flex: 1; background: transparent; border: none; color: var(--text-primary); font-family: var(--font-main); font-size: 15px; resize: none; max-height: 200px; outline: none; line-height: 1.5; padding-right: 12px; }
+  
+  #send { background: var(--text-primary); color: var(--bg-base); border: none; border-radius: 8px; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: opacity 0.2s; font-weight: bold; }
+  #send:hover { opacity: 0.8; }
+  #send:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .mode-toggles { display: flex; gap: 10px; margin-bottom: 8px; }
+  .mode-badge { font-size: 12px; color: var(--text-muted); cursor: pointer; user-select: none; transition: color 0.2s; }
+  .mode-badge.active { color: var(--accent); font-weight: 600; }
+  .mode-badge.active.agent { color: var(--plan-color); }
+
+  /* Settings & Skills Views */
+  .dashboard-view { padding: 40px 10%; overflow-y: auto; }
+  .dashboard-title { font-size: 24px; font-weight: 600; margin-bottom: 20px; border-bottom: 1px solid var(--border); padding-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
+  
+  .section-title { font-size: 18px; font-weight: 600; margin: 30px 0 15px; color: var(--text-primary); display: flex; justify-content: space-between; align-items: center; }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+  .card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card-title { font-size: 16px; font-weight: 600; margin-bottom: 10px; color: var(--accent); display: flex; justify-content: space-between; align-items: center;}
+  .card-title.plugin { color: var(--plugin-color); }
+  .card-title.mcp { color: var(--mcp-color); }
+  .card-meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); margin-bottom: 10px; }
+  .card-desc { font-size: 13px; color: var(--text-primary); line-height: 1.5; }
+  
+  .form-group { margin-bottom: 20px; }
+  .form-group label { display: block; margin-bottom: 8px; font-size: 14px; color: var(--text-muted); }
+  .form-group input, .form-group select { width: 100%; background: var(--bg-base); border: 1px solid var(--border); color: white; padding: 10px 12px; border-radius: 6px; font-family: var(--font-mono); font-size: 14px; outline: none; }
+  .form-group input:focus { border-color: var(--accent); }
+  
+  .btn { background: var(--bg-msg); border: 1px solid var(--border); color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); }
+  .btn-small { padding: 4px 10px; font-size: 12px; }
+  .btn:hover { filter: brightness(1.2); }
+
+  /* Modals */
+  .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); display: flex; justify-content: center; align-items: center; z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+  .modal-overlay.active { opacity: 1; pointer-events: all; }
+  .modal { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; width: 90%; max-width: 900px; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+  .modal-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-size: 18px; font-weight: 600;}
+  .modal-body { padding: 20px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+  .modal-footer { padding: 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+  .code-editor { font-family: var(--font-mono); font-size: 13px; background: #1e1e24; color: #ececf1; border: 1px solid var(--border); border-radius: 8px; padding: 15px; width: 100%; height: 350px; resize: none; outline: none; }
+  .code-editor:focus { border-color: var(--plugin-color); }
+
+  /* Scrollbar */
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px; border: 2px solid var(--bg-base); }
-  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  
+  .toast { position: fixed; bottom: 20px; right: 20px; background: var(--accent); color: white; padding: 12px 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); transition: opacity 0.3s; opacity: 0; pointer-events: none; z-index: 1000; }
 </style>
 </head>
 <body>
 
 <div id="sidebar">
-  <h1>NOVA</h1>
-  <div class="subtitle">Personal Assistant Core</div>
-  <div id="status-box">
-    <div class="row"><span class="label">Estado</span><span class="val" id="s-status">—</span></div>
-    <div class="row"><span class="label">Proveedor</span><span class="val" id="s-provider">—</span></div>
-    <div class="row"><span class="label">Plugins</span><span class="val" id="s-plugins">—</span></div>
-  </div>
-  <div id="skills-list">
-    <h3>Catálogo de Skills</h3>
-    <div id="skills-inner"></div>
+  <div class="brand">NOVA</div>
+  <div class="subtitle">Command Center</div>
+  
+  <div class="nav-menu">
+    <div class="nav-item active" onclick="switchTab('chat')">💬 Chat & Agente</div>
+    <div class="nav-item" onclick="switchTab('skills')">🧩 Skills & MCPs</div>
+    <div class="nav-item" onclick="switchTab('config')">⚙️ Configuración</div>
+    <div class="nav-item" onclick="switchTab('logs')">📝 Logs & Memoria</div>
   </div>
 </div>
 
 <div id="main">
-  <div id="messages">
-    <div class="msg system">Nova Web Interface (Premium UI) — Sesión iniciada</div>
-  </div>
-  <div id="input-area">
-    <div id="mode-row">
-      <button class="mode-btn active" id="btn-chat" onclick="setMode('chat')">💬 Modo Chat</button>
-      <button class="mode-btn" id="btn-agent" onclick="setMode('agent')">🤖 Modo Autónomo</button>
-      <span id="char-count"></span>
+  <!-- CHAT VIEW -->
+  <div id="view-chat" class="view active">
+    <div id="messages">
+      <div class="msg system">NOVA AI Backend Inicializado — Todo listo.</div>
     </div>
-    <div id="input-row">
-      <textarea id="input" placeholder="Ingresa tu directiva..." rows="1"></textarea>
-      <button id="send" onclick="sendMsg()">↑</button>
+    
+    <div id="input-area">
+      <div class="mode-toggles">
+        <span class="mode-badge active" id="badge-chat" onclick="setMode('chat')">Modo Chat</span>
+        <span style="color: var(--border)">|</span>
+        <span class="mode-badge" id="badge-agent" onclick="setMode('agent')">Modo Autónomo (Agente)</span>
+      </div>
+      <div class="input-wrapper">
+        <textarea id="input" rows="1" placeholder="¿En qué te puedo ayudar hoy? (Shift+Enter para nueva línea)"></textarea>
+        <button id="send" onclick="sendMsg()">↑</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- SKILLS VIEW -->
+  <div id="view-skills" class="view dashboard-view">
+    <div class="dashboard-title">
+      <span>🧩 Catálogo de Skills & Plugins</span>
+    </div>
+
+    <!-- MCP Section -->
+    <div class="section-title">
+      <span>🔌 Servidores MCP (Model Context Protocol)</span>
+      <button class="btn btn-primary btn-small" onclick="openMcpModal()" style="background: var(--mcp-color); border-color: var(--mcp-color);">+ Añadir Servidor MCP</button>
+    </div>
+    <div class="card-grid" id="mcp-grid">
+      <!-- Llenado dinamicamente -->
+    </div>
+    
+    <!-- Plugins Section -->
+    <div class="section-title">
+      <span>📦 Plugins Externos (Cargados)</span>
+      <button class="btn btn-primary btn-small" onclick="openPluginModal()" style="background: var(--plugin-color); border-color: var(--plugin-color);">✨ Crear Nuevo Plugin</button>
+    </div>
+    <div class="card-grid" id="plugins-grid">
+      <!-- Llenado dinamicamente -->
+    </div>
+
+    <!-- Core Skills Section -->
+    <div class="section-title">🛠️ Skills Nativas del Core</div>
+    <div class="card-grid" id="skills-grid">
+      <!-- Llenado dinamicamente -->
+    </div>
+  </div>
+
+  <!-- CONFIG VIEW -->
+  <div id="view-config" class="view dashboard-view">
+    <div class="dashboard-title">⚙️ Configuración del Sistema</div>
+    <div style="max-width: 600px;">
+      <div class="card">
+        <div class="card-title">Ajustes de Entorno (.env)</div>
+        <div class="card-desc" style="margin-bottom: 20px;">Los cambios aquí se aplicarán al archivo local y tendrán efecto inmediato para nuevas operaciones.</div>
+        
+        <div class="form-group">
+          <label>Voz del Sistema (NOVA_VOICE)</label>
+          <div style="display: flex; gap: 10px;">
+            <input type="text" id="env_voice" placeholder="Ej: Reed, Monica, edge-tts...">
+            <button class="btn btn-primary" onclick="saveEnv('NOVA_VOICE', 'env_voice')">Guardar</button>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label>URL Ollama Local (OLLAMA_BASE_URL)</label>
+          <div style="display: flex; gap: 10px;">
+            <input type="text" id="env_ollama" placeholder="http://127.0.0.1:11434/v1">
+            <button class="btn btn-primary" onclick="saveEnv('OLLAMA_BASE_URL', 'env_ollama')">Guardar</button>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label>Presupuesto Sesión (SESSION_BUDGET_USD)</label>
+          <div style="display: flex; gap: 10px;">
+            <input type="text" id="env_budget" placeholder="0.10">
+            <button class="btn btn-primary" onclick="saveEnv('SESSION_BUDGET_USD', 'env_budget')">Guardar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGS VIEW -->
+  <div id="view-logs" class="view dashboard-view">
+    <div class="dashboard-title">📝 System Status & Memory</div>
+    <div class="card">
+      <div class="card-title">Diagnóstico</div>
+      <div id="status-content" class="markdown-body" style="color: var(--text-muted); font-family: var(--font-mono); font-size: 13px;">
+        Cargando métricas...
+      </div>
     </div>
   </div>
 </div>
 
+<!-- Modal IDE para Plugins -->
+<div class="modal-overlay" id="plugin-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <span>✨ Mini-IDE: Programar Nuevo Plugin</span>
+      <button class="btn" onclick="closeModal('plugin-modal')" style="background:transparent; border:none; color:white; font-size:20px; cursor:pointer;">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Nombre interno del plugin (sin espacios ni .py, ej: mis_graficos):</label>
+        <input type="text" id="plugin-name" placeholder="nombre_del_plugin">
+      </div>
+      <div class="form-group" style="flex:1;">
+        <label>Código del Plugin (Python):</label>
+        <textarea id="plugin-code" class="code-editor">
+PLUGIN_META = {
+    "name": "Mi Nueva Herramienta",
+    "version": "1.0.0",
+    "description": "Descripción general para el usuario.",
+    "author": "Usuario de Nova",
+}
+
+def ejecutar_mi_accion(args: str) -> str:
+    """Implementa la lógica real aquí."""
+    return f"¡Herramienta ejecutada exitosamente con args: {args}!"
+
+TOOL_CATALOG = {
+    "mi_nueva_accion": (
+        "Descripción detallada para que el LLM sepa exactamente cuándo invocarla.",
+        ejecutar_mi_accion,
+        "text" # Tipo de argumento: 'text', 'location', 'None'
+    ),
+}
+</textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('plugin-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="savePlugin()" style="background: var(--plugin-color); border-color: var(--plugin-color);">Guardar y Escribir en Disco</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal para MCP -->
+<div class="modal-overlay" id="mcp-modal">
+  <div class="modal" style="max-width: 600px;">
+    <div class="modal-header">
+      <span>🔌 Añadir Servidor MCP</span>
+      <button class="btn" onclick="closeModal('mcp-modal')" style="background:transparent; border:none; color:white; font-size:20px; cursor:pointer;">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>ID del Servidor (ej: fetch-mcp):</label>
+        <input type="text" id="mcp-id" placeholder="identificador-unico">
+      </div>
+      <div class="form-group">
+        <label>Comando (ej: python, npx, node):</label>
+        <input type="text" id="mcp-cmd" placeholder="python">
+      </div>
+      <div class="form-group">
+        <label>Argumentos (separados por coma, ej: -m,fetch_mcp):</label>
+        <input type="text" id="mcp-args" placeholder="-m, my_module">
+      </div>
+      <div class="form-group">
+        <label>Descripción:</label>
+        <input type="text" id="mcp-desc" placeholder="Herramienta para buscar información">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('mcp-modal')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveMcp()" style="background: var(--mcp-color); border-color: var(--mcp-color);">Guardar Servidor</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Guardado correctamente</div>
+
 <script>
+// Configure Marked.js
+marked.setOptions({
+  highlight: function(code, lang) {
+    const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+    return hljs.highlight(code, { language }).value;
+  },
+  breaks: true
+});
+
 let mode = 'chat';
 let busy = false;
+let currentTypingIndicator = null;
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.opacity = 1;
+  setTimeout(() => t.style.opacity = 0, 3000);
+}
+
+function openPluginModal() { document.getElementById('plugin-modal').classList.add('active'); }
+function openMcpModal() { document.getElementById('mcp-modal').classList.add('active'); }
+function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+async function savePlugin() {
+  const name = document.getElementById('plugin-name').value.trim();
+  const code = document.getElementById('plugin-code').value;
+  if(!name) { alert("El nombre del plugin es obligatorio"); return; }
+  
+  try {
+    const r = await fetch('/api/plugins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, code })
+    });
+    if(r.ok) {
+      showToast('Plugin guardado! (Reinicia Nova para cargar)');
+      closeModal('plugin-modal');
+      loadPlugins();
+    } else {
+      const err = await r.json();
+      alert("Error: " + err.error);
+    }
+  } catch(e) { alert("Error de conexión"); }
+}
+
+async function saveMcp() {
+  const id = document.getElementById('mcp-id').value.trim();
+  const cmd = document.getElementById('mcp-cmd').value.trim();
+  const args = document.getElementById('mcp-args').value.split(',').map(s => s.trim()).filter(s => s);
+  const desc = document.getElementById('mcp-desc').value.trim();
+  
+  if(!id || !cmd) { alert("ID y Comando son obligatorios"); return; }
+  
+  try {
+    const r = await fetch('/api/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, cmd, args, desc })
+    });
+    if(r.ok) {
+      showToast('Servidor MCP añadido con éxito');
+      closeModal('mcp-modal');
+      loadPlugins();
+    } else {
+      const err = await r.json();
+      alert("Error: " + err.error);
+    }
+  } catch(e) { alert("Error de conexión"); }
+}
+
+function switchTab(tabId) {
+  document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(e => e.classList.remove('active'));
+  
+  event.currentTarget.classList.add('active');
+  document.getElementById('view-' + tabId).classList.add('active');
+  
+  if(tabId === 'config') loadConfig();
+  if(tabId === 'skills') loadPlugins();
+  if(tabId === 'logs') loadStatus();
+}
 
 function setMode(m) {
   mode = m;
-  document.getElementById('btn-chat').classList.toggle('active', m === 'chat');
-  document.getElementById('btn-agent').classList.toggle('active', m === 'agent');
-  document.getElementById('btn-agent').classList.toggle('agent-mode', m === 'agent');
-  document.getElementById('send').classList.toggle('agent-mode', m === 'agent');
-  document.getElementById('input').placeholder =
-    m === 'agent' ? 'Establece el objetivo autónomo...' : 'Ingresa tu directiva...';
-}
-
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 150) + 'px';
+  document.getElementById('badge-chat').classList.toggle('active', m === 'chat');
+  document.getElementById('badge-agent').classList.toggle('active', m === 'agent');
+  document.getElementById('badge-agent').classList.toggle('agent', m === 'agent');
+  
+  document.getElementById('input').placeholder = m === 'agent' 
+    ? 'Especifica el objetivo autónomo del Agente...' 
+    : '¿En qué te puedo ayudar hoy? (Shift+Enter para nueva línea)';
 }
 
 const inp = document.getElementById('input');
 inp.addEventListener('input', () => {
-  autoResize(inp);
-  const n = inp.value.length;
-  document.getElementById('char-count').textContent = n > 0 ? n + ' caracteres' : '';
+  inp.style.height = 'auto';
+  inp.style.height = Math.min(inp.scrollHeight, 200) + 'px';
 });
+
 inp.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  if (e.key === 'Enter' && !e.shiftKey) { 
+    e.preventDefault(); 
+    sendMsg(); 
+  }
 });
 
 function scrollBottom() {
@@ -287,155 +500,244 @@ function scrollBottom() {
   el.scrollTop = el.scrollHeight;
 }
 
-function addMsg(cls, content, who = '') {
+function addMessageFrame(who, cls) {
   const msgs = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = 'msg ' + cls;
-  if (who) div.innerHTML = `<div class="who">${who}</div>`;
-  const body = document.createElement('div');
-  body.className = 'body';
-  body.textContent = content;
-  div.appendChild(body);
+  
+  const avatar = document.createElement('div');
+  avatar.className = 'msg-avatar';
+  avatar.textContent = who === 'user' ? 'U' : (cls === 'agent' ? '⚙️' : 'N');
+  
+  const content = document.createElement('div');
+  content.className = 'msg-content markdown-body';
+  
+  div.appendChild(avatar);
+  div.appendChild(content);
   msgs.appendChild(div);
   scrollBottom();
-  return body;
+  
+  return content;
 }
 
-function addAgentMsg() {
-  const msgs = document.getElementById('messages');
-  const div = document.createElement('div');
-  div.className = 'msg agent';
-  div.innerHTML = '<div class="who">🤖 AGENTE AUTÓNOMO</div>';
-  const body = document.createElement('div');
-  body.className = 'body';
-  div.appendChild(body);
-  msgs.appendChild(div);
-  scrollBottom();
-  return body;
+function addTypingIndicator() {
+  const container = addMessageFrame('nova', 'nova');
+  container.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+  currentTypingIndicator = container.parentElement;
 }
 
-function renderAgentLine(body, line) {
-  const span = document.createElement('div');
-  if (line.startsWith('📋')) {
-    span.className = 'plan-line';
-  } else if (line.startsWith('  ⚙️') || line.startsWith('⚙️')) {
-    span.className = 'tool-line';
-  } else if (line.startsWith('     →') || line.startsWith('   →')) {
-    span.className = 'result-line';
-  } else if (line.startsWith('✅') || line.startsWith('🔄')) {
-    span.className = 'final-line';
+function removeTypingIndicator() {
+  if (currentTypingIndicator) {
+    currentTypingIndicator.remove();
+    currentTypingIndicator = null;
   }
-  span.textContent = line;
-  body.appendChild(span);
-  scrollBottom();
+}
+
+function addCopyButtons(container) {
+  container.querySelectorAll('pre').forEach(pre => {
+    if(pre.querySelector('.copy-btn')) return;
+    const btn = document.createElement('button');
+    btn.className = 'copy-btn';
+    btn.textContent = 'Copiar';
+    btn.onclick = () => {
+      navigator.clipboard.writeText(pre.innerText.replace('Copiar\n',''));
+      btn.textContent = 'Copiado!';
+      setTimeout(() => btn.textContent = 'Copiar', 2000);
+    };
+    pre.appendChild(btn);
+  });
 }
 
 function setBusy(b) {
   busy = b;
   document.getElementById('send').disabled = b;
-  document.getElementById('input').disabled = b;
+  inp.disabled = b;
 }
 
 function sendMsg() {
   if (busy) return;
   const q = inp.value.trim();
   if (!q) return;
-  inp.value = ''; autoResize(inp);
-  document.getElementById('char-count').textContent = '';
+  inp.value = ''; inp.style.height = 'auto';
 
-  addMsg('user', q);
+  const userContainer = addMessageFrame('user', 'user');
+  userContainer.textContent = q;
   setBusy(true);
+  addTypingIndicator();
 
-  if (mode === 'agent') {
-    streamAgent(q);
-  } else {
-    streamChat(q);
-  }
+  if (mode === 'agent') streamAgent(q);
+  else streamChat(q);
 }
 
 function streamChat(q) {
-  const body = addMsg('nova', '', 'NOVA AI');
-  const cursor = document.createElement('span');
-  cursor.className = 'cursor'; body.appendChild(cursor);
-
+  let content = null;
+  let rawText = '';
+  
   const url = '/stream?q=' + encodeURIComponent(q);
   const es = new EventSource(url);
+  
   es.onmessage = e => {
+    if (!content) {
+      removeTypingIndicator();
+      content = addMessageFrame('nova', 'nova');
+    }
+    
     if (e.data === '[DONE]') {
-      cursor.remove(); es.close(); setBusy(false); return;
+      es.close(); setBusy(false); 
+      content.innerHTML = marked.parse(rawText);
+      addCopyButtons(content);
+      return;
     }
     if (e.data.startsWith('[ERR]')) {
-      body.textContent = e.data.slice(5);
+      content.innerHTML = `<span style="color:red">${e.data.slice(5)}</span>`;
       es.close(); setBusy(false); return;
     }
-    body.insertBefore(document.createTextNode(e.data), cursor);
+    rawText += e.data;
+    content.innerHTML = marked.parse(rawText + ' ▍');
     scrollBottom();
   };
-  es.onerror = () => { cursor.remove(); es.close(); setBusy(false); };
+  es.onerror = () => { es.close(); setBusy(false); removeTypingIndicator(); };
 }
 
 function streamAgent(q) {
-  const body = addAgentMsg();
+  let content = null;
+  
   const url = '/agent?q=' + encodeURIComponent(q);
   const es = new EventSource(url);
   let buf = '';
+  
   es.onmessage = e => {
+    if (!content) {
+      removeTypingIndicator();
+      content = addMessageFrame('agent', 'agent');
+      content.className = 'msg-content agent-block';
+    }
+
     if (e.data === '[DONE]') {
-      if (buf) renderAgentLine(body, buf);
+      if (buf) renderAgentLine(content, buf);
       es.close(); setBusy(false); return;
     }
     if (e.data.startsWith('[ERR]')) {
-      renderAgentLine(body, '❌ ' + e.data.slice(5));
+      renderAgentLine(content, '❌ ' + e.data.slice(5));
       es.close(); setBusy(false); return;
     }
     buf += e.data;
     const lines = buf.split('\n');
     buf = lines.pop(); 
     for (const l of lines) {
-      if (l.trim()) renderAgentLine(body, l);
+      if (l.trim()) renderAgentLine(content, l);
     }
     scrollBottom();
   };
-  es.onerror = () => { es.close(); setBusy(false); };
+  es.onerror = () => { es.close(); setBusy(false); removeTypingIndicator(); };
+}
+
+function renderAgentLine(body, line) {
+  const span = document.createElement('div');
+  if (line.startsWith('📋')) span.className = 'plan-line';
+  else if (line.startsWith('  ⚙️') || line.startsWith('⚙️')) span.className = 'tool-line';
+  else if (line.startsWith('     →') || line.startsWith('   →')) span.className = 'result-line';
+  else if (line.startsWith('✅') || line.startsWith('🔄')) span.className = 'final-line';
+  
+  span.innerHTML = marked.parseInline(line);
+  body.appendChild(span);
+}
+
+// Backend APIs
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const d = await r.json();
+    document.getElementById('env_voice').value = d.NOVA_VOICE || '';
+    document.getElementById('env_ollama').value = d.OLLAMA_BASE_URL || '';
+    document.getElementById('env_budget').value = d.SESSION_BUDGET_USD || '';
+  } catch(e) {}
+}
+
+async function saveEnv(key, inputId) {
+  const val = document.getElementById(inputId).value;
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value: val })
+    });
+    if(r.ok) showToast('Configuración guardada (' + key + ')');
+  } catch(e) { alert('Error guardando config'); }
+}
+
+async function loadPlugins() {
+  try {
+    const r = await fetch('/api/plugins');
+    const data = await r.json();
+    
+    // MCP Grid
+    const mcpGrid = document.getElementById('mcp-grid');
+    mcpGrid.innerHTML = '';
+    if(!data.mcps || Object.keys(data.mcps).length === 0) {
+      mcpGrid.innerHTML = '<div style="color: var(--text-muted); font-size: 13px;">No hay servidores MCP configurados.</div>';
+    } else {
+      for (const [id, details] of Object.entries(data.mcps)) {
+        mcpGrid.innerHTML += `
+          <div class="card">
+            <div class="card-title mcp">🔌 ${id}</div>
+            <div class="card-meta">Cmd: ${details.command} ${details.args ? details.args.join(' ') : ''}</div>
+            <div class="card-desc">${details.description || 'Servidor MCP sin descripción.'}</div>
+          </div>
+        `;
+      }
+    }
+
+    // Plugins Grid
+    const pGrid = document.getElementById('plugins-grid');
+    pGrid.innerHTML = '';
+    if(data.plugins.length === 0) {
+      pGrid.innerHTML = '<div style="color: var(--text-muted); font-size: 13px;">No hay plugins externos cargados.</div>';
+    } else {
+      data.plugins.forEach(p => {
+        pGrid.innerHTML += `
+          <div class="card">
+            <div class="card-title plugin">📦 ${p.name || 'Desconocido'}</div>
+            <div class="card-meta">Versión: ${p.version || '1.0.0'} | Autor: ${p.author || 'Anónimo'}</div>
+            <div class="card-desc">${p.description || 'Sin descripción.'}</div>
+          </div>
+        `;
+      });
+    }
+
+    // Skills Grid
+    const sGrid = document.getElementById('skills-grid');
+    sGrid.innerHTML = '';
+    for (const [k, v] of Object.entries(data.skills)) {
+      sGrid.innerHTML += `
+        <div class="card">
+          <div class="card-title">⚡ ${k.replace(/_/g, ' ')}</div>
+          <div class="card-desc">${v}</div>
+        </div>
+      `;
+    }
+  } catch(e) {}
 }
 
 async function loadStatus() {
   try {
     const r = await fetch('/api/status');
     const d = await r.json();
-    document.getElementById('s-status').textContent = d.daemon ? 'Online' : (d.router ? 'Router' : 'Offline');
-    document.getElementById('s-provider').textContent = d.providers || '—';
-    document.getElementById('s-plugins').textContent = (d.plugins || 0) + ' Cargados';
+    document.getElementById('status-content').innerHTML = `
+      <p><b>Daemon Online:</b> ${d.daemon ? 'Sí' : 'No'}</p>
+      <p><b>Router Online:</b> ${d.router ? 'Sí' : 'No'}</p>
+      <p><b>Proveedores Activos:</b> ${d.providers || 'Ninguno'}</p>
+      <p><b>Plugins Cargados:</b> ${d.plugins}</p>
+      <p><b>Directorio Root:</b> ${d.root_dir}</p>
+    `;
   } catch(e) {}
 }
 
-async function loadSkills() {
-  try {
-    const r = await fetch('/api/skills');
-    const d = await r.json();
-    const el = document.getElementById('skills-inner');
-    el.innerHTML = '';
-    for (const [k, v] of Object.entries(d)) {
-      const div = document.createElement('div');
-      div.className = 'skill-item';
-      div.title = v;
-      div.innerHTML = `<span>⚡</span>${k}`;
-      div.onclick = () => {
-        inp.value = k.replace(/_/g,' ');
-        inp.focus();
-      };
-      el.appendChild(div);
-    }
-  } catch(e) {}
-}
-
+// Initial load
 loadStatus();
-loadSkills();
-setInterval(loadStatus, 10000);
 </script>
 </body>
-</html>"""
-
+</html>'''
 
 # ─── Request handler ──────────────────────────────────────────────────────────
 
@@ -444,8 +746,7 @@ class NovaWebHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.debug(fmt, *args)
 
-    def _send_headers(self, content_type: str, status: int = 200,
-                      extra: dict | None = None) -> None:
+    def _send_headers(self, content_type: str, status: int = 200, extra: dict | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -456,14 +757,10 @@ class NovaWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _sse_headers(self) -> None:
-        self._send_headers(
-            "text/event-stream; charset=utf-8",
-            extra={"X-Accel-Buffering": "no", "Connection": "keep-alive"},
-        )
+        self._send_headers("text/event-stream; charset=utf-8", extra={"X-Accel-Buffering": "no", "Connection": "keep-alive"})
 
     def _write_sse(self, data: str) -> bool:
         try:
-            # Each SSE data field can't have newlines — encode them
             for line in data.split("\n"):
                 self.wfile.write(f"data: {line}\n".encode())
             self.wfile.write(b"\n")
@@ -502,61 +799,171 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             self._stream_agent(q)
 
         elif path == "/api/status":
-            # No llama _init_nova() — responde instantáneamente con lo que esté listo
             from nova.tools.nova_plugin_loader import loaded_plugins
             data = {
                 "ok":        True,
                 "daemon":    _daemon is not None,
                 "router":    _router is not None and _router is not False,
-                "providers": (
-                    _router._active_provider
-                    if _router and _router is not False
-                    else ("daemon" if _daemon else "not_initialized")
-                ),
+                "providers": _router._active_provider if _router and _router is not False else "not_initialized",
                 "plugins": len(loaded_plugins()),
+                "root_dir": str(_SRC)
             }
             self._send_headers("application/json")
             self.wfile.write(json.dumps(data).encode())
 
-        elif path == "/api/skills":
+        elif path == "/api/plugins":
             _init_nova()
-            skills_dict: dict[str, str] = {}
+            from nova.tools.nova_plugin_loader import loaded_plugins
+            
+            skills_dict = {}
             try:
                 from nova.tools.nova_skills import _TOOL_CATALOG
-                skills_dict = {k: v[0] for k, v in list(_TOOL_CATALOG.items())[:60]}
+                skills_dict = {k: v[0] for k, v in list(_TOOL_CATALOG.items())[:100]}
             except Exception:
                 pass
-            self._send_headers("application/json")
-            self.wfile.write(json.dumps(skills_dict, ensure_ascii=False).encode())
+                
+            mcp_data = {}
+            if MCP_CONFIG_PATH.exists():
+                try:
+                    with open(MCP_CONFIG_PATH, "r", encoding="utf-8") as f:
+                        mcp_config = json.load(f)
+                        mcp_data = mcp_config.get("mcpServers", {})
+                except Exception:
+                    pass
 
-        elif path == "/api/history":
+            data = {
+                "plugins": loaded_plugins(),
+                "skills": skills_dict,
+                "mcps": mcp_data
+            }
             self._send_headers("application/json")
-            self.wfile.write(json.dumps(_history[-40:], ensure_ascii=False).encode())
+            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
+            
+        elif path == "/api/config":
+            # Leer el archivo .env
+            env_vars = {}
+            if ENV_PATH.exists():
+                with open(ENV_PATH, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            env_vars[k.strip()] = v.strip().strip("'\"")
+            self._send_headers("application/json")
+            self.wfile.write(json.dumps(env_vars).encode())
 
         else:
             self._send_headers("text/plain", 404)
             self.wfile.write(b"Not found")
 
     def do_POST(self):
-        if self.path == "/api/clear":
-            _history.clear()
-            self._send_headers("application/json")
-            self.wfile.write(b'{"ok":true}')
+        if self.path == "/api/config":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                key = body.get("key")
+                val = body.get("value")
+                
+                if key and val is not None:
+                    # Sobrescribir en archivo
+                    lines = []
+                    found = False
+                    if ENV_PATH.exists():
+                        with open(ENV_PATH, "r", encoding="utf-8") as f:
+                            lines = f.readlines()
+                    
+                    for i, line in enumerate(lines):
+                        if line.startswith(key + "="):
+                            lines[i] = f"{key}={val}\n"
+                            found = True
+                            break
+                    if not found:
+                        lines.append(f"{key}={val}\n")
+                        
+                    with open(ENV_PATH, "w", encoding="utf-8") as f:
+                        f.writelines(lines)
+                        
+                    os.environ[key] = val
+                    
+                self._send_headers("application/json")
+                self.wfile.write(b'{"ok":true}')
+            except Exception as e:
+                self._send_headers("application/json", 500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+                
+        elif self.path == "/api/plugins":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                name = body.get("name", "").strip().replace(" ", "_")
+                code = body.get("code", "")
+                
+                if not name:
+                    self._send_headers("application/json", 400)
+                    self.wfile.write(b'{"error":"El nombre es obligatorio"}')
+                    return
+                
+                if not PLUGINS_DIR.exists():
+                    PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+                
+                plugin_file = PLUGINS_DIR / f"nova_plugin_{name}.py"
+                
+                with open(plugin_file, "w", encoding="utf-8") as f:
+                    f.write(code)
+                    
+                self._send_headers("application/json")
+                self.wfile.write(json.dumps({"ok": True, "file": str(plugin_file)}).encode())
+                
+            except Exception as e:
+                self._send_headers("application/json", 500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+                
+        elif self.path == "/api/mcp":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                mcp_id = body.get("id", "").strip()
+                cmd = body.get("cmd", "").strip()
+                args = body.get("args", [])
+                desc = body.get("desc", "").strip()
+                
+                if not mcp_id or not cmd:
+                    self._send_headers("application/json", 400)
+                    self.wfile.write(b'{"error":"ID y Comando son obligatorios"}')
+                    return
+                
+                mcp_config = {"mcpServers": {}}
+                if MCP_CONFIG_PATH.exists():
+                    with open(MCP_CONFIG_PATH, "r", encoding="utf-8") as f:
+                        mcp_config = json.load(f)
+                
+                if "mcpServers" not in mcp_config:
+                    mcp_config["mcpServers"] = {}
+                    
+                mcp_config["mcpServers"][mcp_id] = {
+                    "command": cmd,
+                    "args": args,
+                    "description": desc
+                }
+                
+                with open(MCP_CONFIG_PATH, "w", encoding="utf-8") as f:
+                    json.dump(mcp_config, f, indent=2, ensure_ascii=False)
+                    
+                self._send_headers("application/json")
+                self.wfile.write(json.dumps({"ok": True}).encode())
+                
+            except Exception as e:
+                self._send_headers("application/json", 500)
+                self.wfile.write(json.dumps({"error": str(e)}).encode())
+
         else:
             self._send_headers("text/plain", 404)
             self.wfile.write(b"Not found")
 
-    def do_OPTIONS(self):
-        self._send_headers("text/plain",
-                           extra={"Allow": "GET, POST, OPTIONS"})
-
     # ── Chat streaming ────────────────────────────────────────────────────────
-
     def _stream_chat(self, q: str) -> None:
         _history.append({"role": "user", "content": q})
-        chunks: list[str] = []
-
-        # Intentar skills primero
+        chunks = []
         try:
             if _skills:
                 skill_resp = _skills.dispatch(q)
@@ -568,38 +975,29 @@ class NovaWebHandler(BaseHTTPRequestHandler):
         except Exception:
             pass
 
-        # Daemon streaming
         if _daemon:
             try:
                 for chunk in _daemon.chat_stream(q, session="web"):
-                    if not self._write_sse(chunk):
-                        return
+                    if not self._write_sse(chunk): return
                     chunks.append(chunk)
-                response = "".join(chunks)
-                _history.append({"role": "assistant", "content": response})
+                _history.append({"role": "assistant", "content": "".join(chunks)})
                 self._write_sse("[DONE]")
                 return
             except Exception as e:
                 log.debug("Daemon stream falló: %s", e)
 
-        # Router directo
         if _router:
             try:
-                for chunk in _router.route_stream(
-                    [{"role": "user", "content": q}]
-                ):
-                    if not self._write_sse(chunk):
-                        return
+                for chunk in _router.route_stream([{"role": "user", "content": q}]):
+                    if not self._write_sse(chunk): return
                     chunks.append(chunk)
-                response = "".join(chunks)
-                _history.append({"role": "assistant", "content": response})
+                _history.append({"role": "assistant", "content": "".join(chunks)})
             except Exception as e:
                 self._write_sse(f"[ERR]{e}")
 
         self._write_sse("[DONE]")
 
     # ── Agent streaming ───────────────────────────────────────────────────────
-
     def _stream_agent(self, goal: str) -> None:
         import queue as _queue
         _history.append({"role": "user", "content": f"[agente] {goal}"})
@@ -609,10 +1007,8 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             self._write_sse("[DONE]")
             return
 
-        # Run skill_agente in a worker thread so SSE can flush without blocking.
-        # Worker puts progress strings into the queue; sentinel None signals done.
         _DONE = object()
-        q: _queue.Queue = _queue.Queue()
+        q = _queue.Queue()
 
         def _worker():
             def _cb(msg: str) -> None:
@@ -620,7 +1016,7 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             try:
                 from nova.tools.nova_skills import skill_agente
                 final = skill_agente(goal, progress_cb=_cb)
-                q.put(f"\n✅ Resultado:\n{final}")
+                q.put(f"\n✅ **Resultado Final:**\n\n{final}")
                 _history.append({"role": "assistant", "content": final})
             except Exception as e:
                 q.put(f"[ERR]{e}")
@@ -639,31 +1035,23 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             if item is _DONE:
                 break
             if not self._write_sse(str(item)):
-                break  # client disconnected
+                break
 
         self._write_sse("[DONE]")
         t.join(timeout=2)
 
-
 # ─── Server lifecycle ─────────────────────────────────────────────────────────
 
-_server_instance: ThreadingHTTPServer | None = None
-_server_thread:   threading.Thread     | None = None
+_server_instance = None
+_server_thread = None
 
-
-def start(host: str = NOVA_WEB_HOST, port: int = NOVA_WEB_PORT,
-          open_browser: bool = False) -> bool:
-    """Inicia el servidor en un hilo daemon. Retorna True si arrancó."""
+def start(host: str = NOVA_WEB_HOST, port: int = NOVA_WEB_PORT, open_browser: bool = False) -> bool:
     global _server_instance, _server_thread
     if _server_instance is not None:
         return True
     try:
         _server_instance = ThreadingHTTPServer((host, port), NovaWebHandler)
-        _server_thread = threading.Thread(
-            target=_server_instance.serve_forever,
-            daemon=True,
-            name="nova-web",
-        )
+        _server_thread = threading.Thread(target=_server_instance.serve_forever, daemon=True, name="nova-web")
         _server_thread.start()
         log.info("[Web] Servidor en http://%s:%d", host, port)
         if open_browser:
@@ -675,19 +1063,16 @@ def start(host: str = NOVA_WEB_HOST, port: int = NOVA_WEB_PORT,
         _server_instance = None
         return False
 
-
 def stop() -> None:
     global _server_instance, _server_thread
     if _server_instance:
         _server_instance.shutdown()
         _server_instance = None
-        _server_thread   = None
+        _server_thread = None
         log.info("[Web] Servidor detenido")
-
 
 def is_running() -> bool:
     return _server_instance is not None
-
 
 def url() -> str:
     if _server_instance is not None:
@@ -695,15 +1080,11 @@ def url() -> str:
         return f"http://{host}:{port}"
     return f"http://{NOVA_WEB_HOST}:{NOVA_WEB_PORT}"
 
-
-# ─── Entry point ─────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO,
-                        format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     _init_nova()
     port = NOVA_WEB_PORT
-    print(f"\n  Nova Web UI → http://127.0.0.1:{port}")
+    print(f"\n  Nova Web Dashboard → http://127.0.0.1:{port}")
     print("  Ctrl+C para detener\n")
     srv = ThreadingHTTPServer((NOVA_WEB_HOST, port), NovaWebHandler)
     try:
