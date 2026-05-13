@@ -196,6 +196,13 @@ _HTML = r'''<!DOCTYPE html>
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   
   .toast { position: fixed; bottom: 20px; right: 20px; background: var(--accent); color: white; padding: 12px 24px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); transition: opacity 0.3s; opacity: 0; pointer-events: none; z-index: 1000; }
+
+  /* Config sub-tabs */
+  .cfg-tab { background: var(--bg-msg); border: 1px solid var(--border); color: var(--text-muted); padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; font-family: var(--font-main); }
+  .cfg-tab:hover { color: var(--text-primary); border-color: var(--accent); }
+  .cfg-tab.active { background: rgba(16,163,127,0.15); border-color: var(--accent); color: var(--accent); }
+  .cfg-section { display: none; }
+  .cfg-section.active { display: block; }
 </style>
 </head>
 <body>
@@ -265,34 +272,263 @@ _HTML = r'''<!DOCTYPE html>
 
   <!-- CONFIG VIEW -->
   <div id="view-config" class="view dashboard-view">
-    <div class="dashboard-title">⚙️ Configuración del Sistema</div>
-    <div style="max-width: 600px;">
-      <div class="card">
-        <div class="card-title">Ajustes de Entorno (.env)</div>
-        <div class="card-desc" style="margin-bottom: 20px;">Los cambios aquí se aplicarán al archivo local y tendrán efecto inmediato para nuevas operaciones.</div>
-        
-        <div class="form-group">
-          <label>Voz del Sistema (NOVA_VOICE)</label>
-          <div style="display: flex; gap: 10px;">
-            <input type="text" id="env_voice" placeholder="Ej: Reed, Monica, edge-tts...">
-            <button class="btn btn-primary" onclick="saveEnv('NOVA_VOICE', 'env_voice')">Guardar</button>
+    <div class="dashboard-title">⚙️ Centro de Control</div>
+
+    <!-- Config sub-nav -->
+    <div style="display:flex; gap:8px; margin-bottom:28px; flex-wrap:wrap;">
+      <button class="cfg-tab active" id="cfg-llm"     onclick="switchCfg('llm',this)">🧠 Modelos & LLM</button>
+      <button class="cfg-tab"        id="cfg-voice"   onclick="switchCfg('voice',this)">🗣️ Voz & Audio</button>
+      <button class="cfg-tab"        id="cfg-integr"  onclick="switchCfg('integr',this)">🔌 Integraciones</button>
+      <button class="cfg-tab"        id="cfg-system"  onclick="switchCfg('system',this)">🛡️ Sistema</button>
+    </div>
+
+    <!-- LLM SECTION -->
+    <div class="cfg-section active" id="section-llm">
+      <div class="section-title" style="margin-top:0">Proveedores de IA</div>
+      <div class="card-grid" style="grid-template-columns:1fr 1fr;">
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Orden de Proveedores</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Orden separado por comas en que Nova prueba los proveedores. Ej: <code>ollama,groq,cerebras</code></div>
+          <input type="text" id="env_router_order" placeholder="ollama,groq,openrouter" style="width:100%;background:var(--bg-base);border:1px solid var(--border);color:white;padding:8px 10px;border-radius:6px;font-family:var(--font-mono);font-size:13px;margin-bottom:10px;">
+          <button class="btn btn-primary" style="width:100%;" onclick="saveEnv('ROUTER_PROVIDER_ORDER','env_router_order')">Guardar Orden</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Ollama Local</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">URL base de tu instancia Ollama local.</div>
+          <input type="text" id="env_ollama" placeholder="http://127.0.0.1:11434/v1" style="width:100%;background:var(--bg-base);border:1px solid var(--border);color:white;padding:8px 10px;border-radius:6px;font-family:var(--font-mono);font-size:13px;margin-bottom:10px;">
+          <button class="btn btn-primary" style="width:100%;" onclick="saveEnv('OLLAMA_BASE_URL','env_ollama')">Guardar URL</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Presupuesto de Sesión</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Máximo USD por sesión antes de advertir. Alerta al llegar al % indicado.</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px;">
+            <input type="text" id="env_budget" placeholder="0.10" style="flex:1;background:var(--bg-base);border:1px solid var(--border);color:white;padding:8px 10px;border-radius:6px;font-family:var(--font-mono);font-size:13px;">
+            <input type="text" id="env_budget_warn" placeholder="0.80 (80%)" style="flex:1;background:var(--bg-base);border:1px solid var(--border);color:white;padding:8px 10px;border-radius:6px;font-family:var(--font-mono);font-size:13px;">
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-primary" style="flex:1;" onclick="saveEnv('SESSION_BUDGET_USD','env_budget')">Guardar Límite</button>
+            <button class="btn btn-primary" style="flex:1;" onclick="saveEnv('BUDGET_WARNING_THRESHOLD','env_budget_warn')">Guardar Alerta</button>
           </div>
         </div>
-        
-        <div class="form-group">
-          <label>URL Ollama Local (OLLAMA_BASE_URL)</label>
-          <div style="display: flex; gap: 10px;">
-            <input type="text" id="env_ollama" placeholder="http://127.0.0.1:11434/v1">
-            <button class="btn btn-primary" onclick="saveEnv('OLLAMA_BASE_URL', 'env_ollama')">Guardar</button>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">API Keys</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Las keys se guardan en tu .env local y nunca se envían a servidores externos.</div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label style="width:90px;font-size:12px;color:var(--text-muted);">Groq</label>
+              <input type="password" id="env_groq" placeholder="gsk_..." style="flex:1;background:var(--bg-base);border:1px solid var(--border);color:white;padding:6px 10px;border-radius:6px;font-family:var(--font-mono);font-size:12px;">
+              <button class="btn btn-small" onclick="saveEnv('GROQ_API_KEY','env_groq')">✓</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label style="width:90px;font-size:12px;color:var(--text-muted);">OpenRouter</label>
+              <input type="password" id="env_openrouter" placeholder="sk-or-..." style="flex:1;background:var(--bg-base);border:1px solid var(--border);color:white;padding:6px 10px;border-radius:6px;font-family:var(--font-mono);font-size:12px;">
+              <button class="btn btn-small" onclick="saveEnv('OPENROUTER_API_KEY','env_openrouter')">✓</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label style="width:90px;font-size:12px;color:var(--text-muted);">Cerebras</label>
+              <input type="password" id="env_cerebras" placeholder="csk-..." style="flex:1;background:var(--bg-base);border:1px solid var(--border);color:white;padding:6px 10px;border-radius:6px;font-family:var(--font-mono);font-size:12px;">
+              <button class="btn btn-small" onclick="saveEnv('CEREBRAS_API_KEY','env_cerebras')">✓</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label style="width:90px;font-size:12px;color:var(--text-muted);">Mistral</label>
+              <input type="password" id="env_mistral" placeholder="..." style="flex:1;background:var(--bg-base);border:1px solid var(--border);color:white;padding:6px 10px;border-radius:6px;font-family:var(--font-mono);font-size:12px;">
+              <button class="btn btn-small" onclick="saveEnv('MISTRAL_API_KEY','env_mistral')">✓</button>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label style="width:90px;font-size:12px;color:var(--text-muted);">DeepSeek</label>
+              <input type="password" id="env_deepseek" placeholder="sk-..." style="flex:1;background:var(--bg-base);border:1px solid var(--border);color:white;padding:6px 10px;border-radius:6px;font-family:var(--font-mono);font-size:12px;">
+              <button class="btn btn-small" onclick="saveEnv('DEEPSEEK_API_KEY','env_deepseek')">✓</button>
+            </div>
           </div>
         </div>
-        
-        <div class="form-group">
-          <label>Presupuesto Sesión (SESSION_BUDGET_USD)</label>
-          <div style="display: flex; gap: 10px;">
-            <input type="text" id="env_budget" placeholder="0.10">
-            <button class="btn btn-primary" onclick="saveEnv('SESSION_BUDGET_USD', 'env_budget')">Guardar</button>
+      </div>
+    </div>
+
+    <!-- VOICE SECTION -->
+    <div class="cfg-section" id="section-voice">
+      <div class="section-title" style="margin-top:0">Personalidad y Voz</div>
+      <div class="card-grid" style="grid-template-columns:1fr 1fr;">
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Identidad del Asistente</div>
+          <div class="form-group" style="margin-top:12px;">
+            <label>Nombre del Asistente</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_name" placeholder="Nova"><button class="btn btn-primary" onclick="saveEnv('ASSISTANT_NAME','env_name')">Guardar</button></div>
           </div>
+          <div class="form-group">
+            <label>Wake Word (palabra de activación)</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_wakeword" placeholder="nova"><button class="btn btn-primary" onclick="saveEnv('WAKE_WORD','env_wakeword')">Guardar</button></div>
+          </div>
+          <div class="form-group">
+            <label>Ventana de seguimiento sin wake word (segundos)</label>
+            <div style="display:flex;gap:8px;"><input type="number" id="env_followup" placeholder="22" min="5" max="120"><button class="btn btn-primary" onclick="saveEnv('FOLLOWUP_WINDOW_SEC','env_followup')">Guardar</button></div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Requerir Wake Word siempre</label>
+            <div style="display:flex;gap:12px;margin-top:6px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="wake_req" id="wake_req_on" value="true"> Sí (más privado)</label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="wake_req" id="wake_req_off" value="false"> No (más fluido)</label>
+            </div>
+            <button class="btn btn-primary" style="margin-top:10px;" onclick="saveWakeReq()">Guardar</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Voz macOS (Sistema)</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Usa el motor TTS nativo de macOS. Voces en español: Reed, Monica, Jorge.</div>
+          <div class="form-group">
+            <label>Voz (NOVA_VOICE)</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_voice" placeholder="Reed"><button class="btn btn-primary" onclick="saveEnv('NOVA_VOICE','env_voice')">Guardar</button></div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Velocidad de habla — <span id="rate_label">185</span> palabras/min</label>
+            <input type="range" id="env_voice_rate" min="100" max="300" value="185" style="width:100%;margin:8px 0;accent-color:var(--accent);" oninput="document.getElementById('rate_label').textContent=this.value">
+            <button class="btn btn-primary" style="width:100%;" onclick="saveEnv('NOVA_VOICE_RATE',null,document.getElementById('env_voice_rate').value)">Guardar Velocidad</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Voz Neuronal Edge-TTS (Opcional)</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Voz neural de alta calidad. Ej: <code>es-AR-TomasNeural</code>, <code>es-ES-AlvaroNeural</code></div>
+          <div class="form-group">
+            <label>Voz Edge (EDGE_VOICE)</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_edge_voice" placeholder="es-AR-TomasNeural"><button class="btn btn-primary" onclick="saveEnv('EDGE_VOICE','env_edge_voice')">Guardar</button></div>
+          </div>
+          <div class="form-group">
+            <label>Velocidad Edge (EDGE_RATE) ej: +10%, -5%</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_edge_rate" placeholder="+0%"><button class="btn btn-primary" onclick="saveEnv('EDGE_RATE','env_edge_rate')">Guardar</button></div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Tono Edge (EDGE_PITCH) ej: +5Hz</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_edge_pitch" placeholder="+0Hz"><button class="btn btn-primary" onclick="saveEnv('EDGE_PITCH','env_edge_pitch')">Guardar</button></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Detección de Audio</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Ajusta cómo Nova detecta el silencio y filtra el ruido ambiental.</div>
+          <div class="form-group">
+            <label>Factor de Filtro de Ruido (NOISE_FILTER_FACTOR) — recomendado: 1.5</label>
+            <div style="display:flex;gap:8px;"><input type="number" id="env_noise" placeholder="1.5" step="0.1" min="0.5" max="5.0"><button class="btn btn-primary" onclick="saveEnv('NOISE_FILTER_FACTOR','env_noise')">Guardar</button></div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Pausa para fin de frase (PAUSE_THRESHOLD) — en segundos</label>
+            <div style="display:flex;gap:8px;"><input type="number" id="env_pause" placeholder="2.5" step="0.1" min="0.5" max="10.0"><button class="btn btn-primary" onclick="saveEnv('PAUSE_THRESHOLD','env_pause')">Guardar</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INTEGRATIONS SECTION -->
+    <div class="cfg-section" id="section-integr">
+      <div class="section-title" style="margin-top:0">Integraciones Externas</div>
+      <div class="card-grid" style="grid-template-columns:1fr 1fr;">
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">🧠 Obsidian / Cerebro</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">El vault físico siempre funciona. La REST API permite búsqueda enriquecida cuando Obsidian está abierto.</div>
+          <div class="form-group">
+            <label>Ruta del Vault (CEREBRO_VAULT)</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_vault" placeholder="~/Cerebro"><button class="btn btn-primary" onclick="saveEnv('CEREBRO_VAULT','env_vault')">Guardar</button></div>
+          </div>
+          <div class="form-group">
+            <label>URL REST API (OBSIDIAN_BASE_URL)</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_obs_url" placeholder="https://127.0.0.1:27124"><button class="btn btn-primary" onclick="saveEnv('OBSIDIAN_BASE_URL','env_obs_url')">Guardar</button></div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>API Key del Plugin (OBSIDIAN_API_KEY)</label>
+            <div style="display:flex;gap:8px;"><input type="password" id="env_obs_key" placeholder="tu_api_key"><button class="btn btn-primary" onclick="saveEnv('OBSIDIAN_API_KEY','env_obs_key')">Guardar</button></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">✈️ Telegram</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Recibe notificaciones y envía comandos a Nova a través de Telegram.</div>
+          <div class="form-group">
+            <label>Bot Token (TELEGRAM_BOT_TOKEN)</label>
+            <div style="display:flex;gap:8px;"><input type="password" id="env_tg_token" placeholder="123456:AAF..."><button class="btn btn-primary" onclick="saveEnv('TELEGRAM_BOT_TOKEN','env_tg_token')">Guardar</button></div>
+          </div>
+          <div class="form-group">
+            <label>Chat ID (TELEGRAM_CHAT_ID)</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_tg_chat" placeholder="tu_chat_id"><button class="btn btn-primary" onclick="saveEnv('TELEGRAM_CHAT_ID','env_tg_chat')">Guardar</button></div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Servidor Telegram activo</label>
+            <div style="display:flex;gap:12px;margin-top:6px;">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="tg_srv" value="1"> Activo</label>
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="radio" name="tg_srv" value="0"> Inactivo</label>
+            </div>
+            <button class="btn btn-primary" style="margin-top:10px;" onclick="saveTgServer()">Guardar</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">⚙️ N8N Automatización</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Conecta Nova con workflows de N8N para automatizar tareas complejas.</div>
+          <div class="form-group">
+            <label>URL de N8N (N8N_BASE_URL)</label>
+            <div style="display:flex;gap:8px;"><input type="text" id="env_n8n_url" placeholder="http://localhost:5678"><button class="btn btn-primary" onclick="saveEnv('N8N_BASE_URL','env_n8n_url')">Guardar</button></div>
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Webhook Secret (N8N_WEBHOOK_SECRET)</label>
+            <div style="display:flex;gap:8px;"><input type="password" id="env_n8n_secret" placeholder="tu_secret"><button class="btn btn-primary" onclick="saveEnv('N8N_WEBHOOK_SECRET','env_n8n_secret')">Guardar</button></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">🐙 GitHub</div>
+          <div class="card-desc" style="margin-bottom:12px;font-size:12px;">Token para que el agente de código pueda leer y escribir repositorios.</div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label>Personal Access Token (GITHUB_TOKEN)</label>
+            <div style="display:flex;gap:8px;"><input type="password" id="env_github" placeholder="ghp_..."><button class="btn btn-primary" onclick="saveEnv('GITHUB_TOKEN','env_github')">Guardar</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SYSTEM SECTION -->
+    <div class="cfg-section" id="section-system">
+      <div class="section-title" style="margin-top:0">Comportamiento del Sistema</div>
+      <div class="card-grid" style="grid-template-columns:1fr 1fr;">
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Memoria e Historial</div>
+          <div class="form-group" style="margin-top:12px;margin-bottom:0;">
+            <label>Máximo de turnos de historial (MAX_HISTORY)</label>
+            <div style="display:flex;gap:8px;"><input type="number" id="env_history" placeholder="20" min="5" max="200"><button class="btn btn-primary" onclick="saveEnv('MAX_HISTORY','env_history')">Guardar</button></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title" style="font-size:14px;">Modo Autónomo — Seguridad</div>
+          <div class="card-desc" style="margin-bottom:16px;font-size:12px;">Controla qué tan libremente puede actuar Nova cuando trabaja de forma autónoma.</div>
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <div>
+              <div style="font-size:13px;margin-bottom:6px;font-weight:500;">Confirmar cambios en archivos antes de aplicar</div>
+              <div style="display:flex;gap:12px;">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;"><input type="radio" name="diff_confirm" id="diff_on" value="1"> Sí (más seguro)</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;"><input type="radio" name="diff_confirm" id="diff_off" value="0"> No (más rápido)</label>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:13px;margin-bottom:6px;font-weight:500;">Generar y ejecutar tests automáticos al editar código</div>
+              <div style="display:flex;gap:12px;">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;"><input type="radio" name="auto_tests" id="tests_on" value="1"> Sí (recomendado)</label>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;"><input type="radio" name="auto_tests" id="tests_off" value="0"> No</label>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-primary" style="margin-top:16px;width:100%;" onclick="saveBehavior()">Guardar Comportamiento</button>
+        </div>
+
+        <div class="card" style="grid-column:1/-1;">
+          <div class="card-title" style="font-size:14px;">Estado de Conexión — Obsidian / Cerebro</div>
+          <div id="cerebro-status" style="font-family:var(--font-mono);font-size:13px;color:var(--text-muted);margin-top:8px;">Comprobando...</div>
+          <button class="btn" style="margin-top:14px;" onclick="checkCerebro()">🔄 Recomprobar Conexión</button>
         </div>
       </div>
     </div>
@@ -643,28 +879,114 @@ function renderAgentLine(body, line) {
   body.appendChild(span);
 }
 
-// Backend APIs
+// ── Config sub-tab switcher ─────────────────────────────────────────────────
+function switchCfg(id, btn) {
+  document.querySelectorAll('.cfg-tab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.cfg-section').forEach(s => s.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('section-' + id).classList.add('active');
+}
+
+// ── Backend APIs ────────────────────────────────────────────────────────────
 async function loadConfig() {
   try {
     const r = await fetch('/api/config');
     const d = await r.json();
-    document.getElementById('env_voice').value = d.NOVA_VOICE || '';
-    document.getElementById('env_ollama').value = d.OLLAMA_BASE_URL || '';
-    document.getElementById('env_budget').value = d.SESSION_BUDGET_USD || '';
-  } catch(e) {}
+
+    // LLM
+    const set = (id, key) => { const el = document.getElementById(id); if(el && d[key]) el.value = d[key]; };
+    set('env_router_order', 'ROUTER_PROVIDER_ORDER');
+    set('env_ollama',       'OLLAMA_BASE_URL');
+    set('env_budget',       'SESSION_BUDGET_USD');
+    set('env_budget_warn',  'BUDGET_WARNING_THRESHOLD');
+    // API keys — only mark placeholder if set (don't reveal value)
+    ['env_groq','env_openrouter','env_cerebras','env_mistral','env_deepseek'].forEach(id => {
+      const keys = {'env_groq':'GROQ_API_KEY','env_openrouter':'OPENROUTER_API_KEY','env_cerebras':'CEREBRAS_API_KEY','env_mistral':'MISTRAL_API_KEY','env_deepseek':'DEEPSEEK_API_KEY'};
+      const el = document.getElementById(id);
+      if(el && d[keys[id]]) el.placeholder = '●●●●●● (configurada)';
+    });
+
+    // Voice
+    set('env_name',       'ASSISTANT_NAME');
+    set('env_wakeword',   'WAKE_WORD');
+    set('env_followup',   'FOLLOWUP_WINDOW_SEC');
+    set('env_voice',      'NOVA_VOICE');
+    set('env_edge_voice', 'EDGE_VOICE');
+    set('env_edge_rate',  'EDGE_RATE');
+    set('env_edge_pitch', 'EDGE_PITCH');
+    set('env_noise',      'NOISE_FILTER_FACTOR');
+    set('env_pause',      'PAUSE_THRESHOLD');
+    if(d['NOVA_VOICE_RATE']) {
+      const sl = document.getElementById('env_voice_rate');
+      if(sl) { sl.value = d['NOVA_VOICE_RATE']; document.getElementById('rate_label').textContent = d['NOVA_VOICE_RATE']; }
+    }
+    const wakeReq = d['REQUIRE_WAKE_WORD'];
+    if(wakeReq === 'true' || wakeReq === '1') document.getElementById('wake_req_on').checked = true;
+    else if(wakeReq !== undefined) document.getElementById('wake_req_off').checked = true;
+
+    // Integrations
+    set('env_vault',     'CEREBRO_VAULT');
+    set('env_obs_url',   'OBSIDIAN_BASE_URL');
+    set('env_n8n_url',   'N8N_BASE_URL');
+    set('env_tg_chat',   'TELEGRAM_CHAT_ID');
+    if(d['NOVA_TELEGRAM_SERVER'] === '1') document.querySelector('input[name="tg_srv"][value="1"]').checked = true;
+    else if(d['NOVA_TELEGRAM_SERVER'] === '0') document.querySelector('input[name="tg_srv"][value="0"]').checked = true;
+
+    // System
+    set('env_history', 'MAX_HISTORY');
+    if(d['NOVA_DIFF_CONFIRM'] === '1') document.getElementById('diff_on').checked = true;
+    else document.getElementById('diff_off').checked = true;
+    if(d['NOVA_AUTO_TESTS'] === '1') document.getElementById('tests_on').checked = true;
+    else document.getElementById('tests_off').checked = true;
+
+    // Obsidian status
+    checkCerebro();
+  } catch(e) { console.error('loadConfig error:', e); }
 }
 
-async function saveEnv(key, inputId) {
-  const val = document.getElementById(inputId).value;
+async function saveEnv(key, inputId, directVal) {
+  const val = directVal !== undefined ? directVal : document.getElementById(inputId).value;
   try {
     const r = await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, value: val })
     });
-    if(r.ok) showToast('Configuración guardada (' + key + ')');
-  } catch(e) { alert('Error guardando config'); }
+    if(r.ok) showToast('✓ ' + key + ' guardado');
+    else showToast('Error guardando ' + key);
+  } catch(e) { showToast('Error de conexión'); }
 }
+
+function saveWakeReq() {
+  const val = document.querySelector('input[name="wake_req"]:checked')?.value;
+  if(val) saveEnv('REQUIRE_WAKE_WORD', null, val);
+}
+
+function saveTgServer() {
+  const val = document.querySelector('input[name="tg_srv"]:checked')?.value;
+  if(val) saveEnv('NOVA_TELEGRAM_SERVER', null, val);
+}
+
+function saveBehavior() {
+  const diff = document.querySelector('input[name="diff_confirm"]:checked')?.value ?? '0';
+  const tests = document.querySelector('input[name="auto_tests"]:checked')?.value ?? '0';
+  saveEnv('NOVA_DIFF_CONFIRM', null, diff);
+  setTimeout(() => saveEnv('NOVA_AUTO_TESTS', null, tests), 200);
+}
+
+async function checkCerebro() {
+  const el = document.getElementById('cerebro-status');
+  if(!el) return;
+  el.textContent = 'Comprobando...';
+  try {
+    const r = await fetch('/api/cerebro');
+    const d = await r.json();
+    const apiIcon = d.api_active ? '🟢 Activa' : '🔴 Inactiva (modo archivo — abre Obsidian para activar)';
+    el.innerHTML = `<b>Vault:</b> ${d.vault_path}<br><b>Notas:</b> ${d.note_count} archivos .md<br><b>REST API:</b> ${apiIcon}`;
+  } catch(e) { el.textContent = 'No se pudo comprobar (servidor no disponible).'; }
+}
+
+
 
 async function loadPlugins() {
   try {
@@ -851,6 +1173,21 @@ class NovaWebHandler(BaseHTTPRequestHandler):
                             env_vars[k.strip()] = v.strip().strip("'\"")
             self._send_headers("application/json")
             self.wfile.write(json.dumps(env_vars).encode())
+
+        elif path == "/api/cerebro":
+            try:
+                from nova.connectors.nova_cerebro import _api_disponible, _VAULT
+                note_count = len(list(_VAULT.rglob("*.md"))) if _VAULT.exists() else 0
+                data = {
+                    "vault_path": str(_VAULT),
+                    "vault_exists": _VAULT.exists(),
+                    "note_count": note_count,
+                    "api_active": _api_disponible(),
+                }
+            except Exception as e:
+                data = {"error": str(e)}
+            self._send_headers("application/json")
+            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
 
         else:
             self._send_headers("text/plain", 404)

@@ -74,7 +74,7 @@ Con al menos una key Nova ya funciona. Ollama es opcional pero habilita modo com
 - **Daemon multi-sesión** — proceso central TCP (puerto 7899) que arranca automáticamente; REPL y HUD se conectan como clientes, eliminando conflictos de Qdrant; soporta `agent_stream` para agentic loop vía socket
 - **Visión** — analiza cámara y pantalla vía Ollama local o OpenRouter como fallback
 - **Agente autónomo** — `route_agentic()`: planifica, ejecuta tools en loop (Plan→Execute→Verify) y muestra el proceso en tiempo real, como Devin/Claude Code
-- **Web UI** — interfaz HTML/SSE en `localhost:8080` sin dependencias extra; modos Chat y Agente, streaming token a token, progress del agentic loop en tiempo real (`/webui` para activar)
+- **Web Dashboard SPA** — interfaz completa en `localhost:8080`: Chat con Agente, catálogo de Skills/Plugins/MCPs, **Control Center** de configuración (API Keys, Voz, Integraciones, Sistema) y visor de Logs — todo sin tocar archivos manualmente (`/webui` para activar)
 - **Plugin system** — agrega skills sin tocar el core: copiá `nova_plugin_tunombre.py` a `~/.nova/plugins/` con `INTENTS`, `TOOL_CATALOG` y un hook opcional `register(skills_module)`
 - **Universal Skill Bridge** — importa skills de cualquier agente (Claude, Hermes, GPT, OpenAI JSON schema, Python callable) y las convierte al formato de plugin de Nova automáticamente
 - **185 agentes especializados** — Firmware Engineer, Software Architect, AI Engineer, Backend Architect y más, ejecutados con proveedores gratuitos
@@ -161,7 +161,8 @@ src/nova/
 │   ├── nova_specialist.py       185 agentes especializados (diff+confirm ON by default)
 │   └── nova_vision.py           Visión: cámara y pantalla
 ├── web/
-│   └── nova_web_server.py       Web UI — ThreadingHTTPServer + SSE streaming en localhost:8080
+│   └── nova_web_server.py       Web Dashboard SPA — Chat+Agente, Skills+MCPs, Control Center,
+│                                Logs; ThreadingHTTPServer + SSE + marked.js + highlight.js
 └── tools/
     ├── nova_skills.py           100+ skills · execute_tool() · skill_agente()
     ├── nova_tools_schemas.py    Auto-genera JSON schemas OpenAI-compatible desde _TOOL_CATALOG
@@ -205,9 +206,14 @@ Formatos soportados: **OpenAI function schema**, **Hermes skill format**, **Pyth
 
 ---
 
-## Roadmap
+### v3.11 ✅ (actual)
+- **Web Dashboard SPA completo** — Chat/Agente streaming, Skills+Plugins+MCPs, Control Center de configuración, Logs
+- **Control Center** — gestiona desde el browser: orden de proveedores LLM, API Keys, voz (con slider de velocidad), Obsidian/Telegram/N8N/GitHub, seguridad del agente
+- **Gestión de MCPs** — visualizar y añadir servidores MCP desde el browser (lee/escribe `.mcp.json`)
+- **Mini-IDE de Plugins** — editor de código embebido para crear plugins sin abrir un editor externo
+- **Gesture UI Qt** — HUD táctico dark estabilizado (thread-safe, auto-arranque, atajos de teclado)
 
-### v3.10 ✅ (actual)
+### v3.10 ✅
 - Universal Skill Bridge — importar skills de Claude, Hermes, GPT, OpenAI
 - Apple ecosystem plugin — iMessage, Reminders, Notes, Spotify
 - `/modelos` — listar todos los providers y modelos configurados por tier
@@ -216,12 +222,11 @@ Formatos soportados: **OpenAI function schema**, **Hermes skill format**, **Pyth
 - Fix logs de debug de rustls/h2/primp/duckduckgo en modo DEBUG
 
 ### Próximo
-- **MCP Server** — exponer Nova como servidor MCP para que Claude Code, Cursor y otros agentes la usen como herramienta
-- **Git-aware** — Nova detecta el repo actual, lee diff, sugiere commits y entiende el contexto del proyecto
-- **LSP integration** — hover, go-to-definition y diagnostics en el REPL para edición de código
-- **Gesture detector UI** — reemplazar overlay OpenCV por ventana Qt nativa
-- **Subagentes paralelos** — ejecutar múltiples agentes especializados en paralelo y consolidar respuestas
+- **LSP Spawning** — despliegue automático de servidores de lenguaje desde el REPL
+- **QA de Plugins** — smoke test automático para validar plugins creados desde el Mini-IDE
+- **Subagentes paralelos** — ejecutar múltiples agentes en paralelo y consolidar respuestas
+- **Historial de conversaciones** — guardar y recuperar sesiones directamente desde el Web Dashboard
 
 ---
 
-*Versión 3.10 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*
+*Versión 3.11 — [Ver releases](https://github.com/Ehr051/NOVA_Personal_Asistente/releases)*

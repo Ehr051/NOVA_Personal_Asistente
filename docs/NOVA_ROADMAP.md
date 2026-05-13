@@ -1,6 +1,6 @@
 # Nova — Estado del Proyecto y Roadmap
 > **Archivo único de contexto.** Cualquier agente que tome este proyecto lee esto primero.  
-> Última actualización: **2026-05-08 (sesión 8)**
+> Última actualización: **2026-05-13 (sesión 9)**
 
 ---
 
@@ -21,8 +21,9 @@ Modo políglota   ████████████████████ 1
 Cross-platform   ████████████████████ 100%  (macOS/Windows/Linux platform adapters completos)
 Streaming LLM    ████████████████████ 100%  (REPL + daemon, token-by-token)
 Tool calling     ████████████████████ 100%  (OpenAI JSON schema, 48 tools, agentic loop)
-Plugins/Web UI   ████████████████████ 100%  (plugin loader + Web UI SSE)
+Plugins/Web UI   ████████████████████ 100%  (plugin loader + Web Dashboard SPA completo)
 Daemon           ████████████████████ 100%  (TCP 7899, auto-launch, streaming)
+Web Dashboard    ████████████████████ 100%  (SPA — Chat, Skills+MCP, Config, Logs)
 ```
 
 ---
@@ -95,7 +96,7 @@ Daemon           ████████████████████ 10
 | LSP semántico | `src/nova/connectors/nova_lsp.py` | ✅ |
 | Telegram Receive | `src/nova/connectors/nova_telegram_server.py` | ✅ |
 | Plugin system | `src/nova/tools/nova_plugin_loader.py` | ✅ |
-| Web UI | `src/nova/web/nova_web_server.py` | ✅ |
+| Web Dashboard SPA | `src/nova/web/nova_web_server.py` | ✅ (Chat+Agente, Skills+MCPs, Control Center, Logs) |
 | Daemon/multi-sesión | `src/nova/core/nova_daemon.py` + `nova_client.py` | ✅ |
 | Streaming LLM | `nova_router.route_stream()` + daemon `chat_stream` + `agent_stream` | ✅ |
 | .venv + uninstall | `install.py` | ✅ |
@@ -118,6 +119,20 @@ Daemon           ████████████████████ 10
 | — | **Modo políglota** | ✅ `_SESSION_LANG` explícito (usuario activa), ES/EN/FR/PT/DE/RU/ZH, TTS con voz del idioma |
 | — | **Memoria/RAG** | ✅ `nova_rag_obsidian.py` → `legacy/`; vault completo en contexto (todas las carpetas) |
 | — | **Requirements + CI** | ✅ `requirements.txt` completo, `install.py` cross-platform, GitHub Actions release por tag |
+
+### ✅ Completado (sesión 9)
+
+| # | Feature | Estado |
+|---|---|---|
+| — | **Web Dashboard SPA completo** | ✅ Refactor total: arquitectura SPA con sidebar de navegación, 4 pestañas: Chat/Agente, Skills+MCPs, Configuración, Logs |
+| — | **Animaciones de pensamiento** | ✅ Typing indicator (3 puntos pulsantes estilo iMessage) durante procesamiento LLM |
+| — | **Markdown + Highlighting** | ✅ Integrado `marked.js` + `highlight.js`; botones "Copiar" en bloques de código |
+| — | **Vista Skills & Plugins** | ✅ Plugins externos con metadatos reales (`PLUGIN_META`). Skills nativas del core en grid |
+| — | **Gestión de MCP Servers** | ✅ Lee/escribe `.mcp.json`; modal interactivo para añadir servidores MCP sin tocar archivos |
+| — | **Mini-IDE de Plugins** | ✅ Editor de código integrado en el browser; guarda `nova_plugin_*.py` directamente en disco |
+| — | **Control Center de Configuración** | ✅ 4 secciones: LLMs/API Keys, Voz+Audio (slider velocidad), Integraciones (Obsidian/Telegram/N8N/GitHub), Sistema |
+| — | **API `/api/cerebro`** | ✅ Endpoint que expone el estado real de Obsidian (vault path, notas, API activa/inactiva) |
+| — | **Gesture UI Qt estabilizada** | ✅ Thread-safe, auto-arranque, atajos de teclado recuperados, HUD táctico dark |
 
 ### ✅ Completado (sesión 8)
 
