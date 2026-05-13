@@ -1,337 +1,183 @@
-"""
-nova_mcp_server.py
-──────────────────
-Servidor MCP que expone las skills de Nova a Claude Code y cualquier cliente MCP.
-
-Uso (stdio transport — Claude Code lo lanza automáticamente):
-    python -m nova.mcp.nova_mcp_server
-
-Configurar en ~/.claude/claude.json o .claude.json del proyecto:
-    {
-      "mcpServers": {
-        "nova": {
-          "command": "python",
-          "args": ["-m", "nova.mcp.nova_mcp_server"],
-          "cwd": "/ruta/a/NOVA_Personal_Asistente/src"
-        }
-      }
-    }
-"""
-
-from __future__ import annotations
-
-import os
+#!/usr/bin/env python3
+"""Nova MCP Server — exposes Nova tools via Model Context Protocol (stdio)."""
 import sys
+import json
+import os
 import logging
+import traceback
 
-# Añadir src al path si se ejecuta directamente
-_SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+# Must add src/ to path before importing nova modules
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SRC = os.path.join(_HERE, "..", "..", "..")
+sys.path.insert(0, _SRC)
 
-from dotenv import load_dotenv
-load_dotenv(os.path.join(_SRC, "..", ".env"))
-
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp import types
-
-log = logging.getLogger("nova_mcp")
-logging.basicConfig(level=logging.WARNING)
-
-# ─── Inicializar Nova (router + skills) ──────────────────────────────────────
-
-def _init_nova():
-    from nova.core.nova_router import NovaRouter
-    from nova.tools.nova_skills import skills as _skills
-    from nova.connectors.nova_cerebro import NovaCerebro
-
-    router = NovaRouter()
-    _skills.set_router(router)
-
-    cerebro = None
-    try:
-        cerebro = NovaCerebro()
-    except Exception:
-        pass
-
-    return router, _skills, cerebro
-
-
+# Load .env
 try:
-    _router, _skills, _cerebro = _init_nova()
-    _NOVA_READY = True
-except Exception as _e:
-    log.warning("Nova init parcial: %s", _e)
-    _router = None
-    _skills = None
-    _cerebro = None
-    _NOVA_READY = False
+    from dotenv import load_dotenv
+    _env = os.path.join(_SRC, "..", ".env")
+    if os.path.exists(_env):
+        load_dotenv(_env)
+except Exception:
+    pass
 
+log = logging.getLogger(__name__)
+logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
 
-# ─── Server MCP ──────────────────────────────────────────────────────────────
+_router = None
 
-server = Server("nova")
+def _get_router():
+    global _router
+    if _router is None:
+        try:
+            from nova.core.nova_router import NovaRouter
+            from nova.tools.nova_skills import skills
+            _router = NovaRouter()
+            skills.set_router(_router)
+        except Exception as e:
+            log.error(f"Failed to init Nova router: {e}")
+    return _router
 
-
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
-    return [
-        types.Tool(
-            name="nova_query",
-            description=(
-                "Envía una consulta en lenguaje natural a Nova. "
-                "Nova tiene 100+ skills: código, Blender 3D, sistema, calendario, clima, "
-                "traductor, crypto, feriados, búsqueda web, git, y 185 agentes especializados. "
-                "Si no hay un skill directo, Nova usa su LLM interno (Groq/Cerebras/Mistral)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Consulta en lenguaje natural (español o inglés)",
-                    }
-                },
-                "required": ["query"],
+def _get_tool_list():
+    tools = []
+    
+    # Always provide ask_nova
+    tools.append({
+        "name": "ask_nova",
+        "description": "Ask Nova anything in natural language. Returns Nova's response.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Question or command for Nova"}
             },
-        ),
-        types.Tool(
-            name="nova_remember",
-            description=(
-                "Guarda un hecho en la memoria vectorial de Nova (Mem0 + Qdrant). "
-                "Nova lo recordará en futuras conversaciones."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "fact": {
-                        "type": "string",
-                        "description": "Hecho o preferencia a recordar",
-                    }
-                },
-                "required": ["fact"],
-            },
-        ),
-        types.Tool(
-            name="nova_search_cerebro",
-            description=(
-                "Busca en el Cerebro/Obsidian del usuario — vault personal con notas, "
-                "documentos, investigaciones y memoria a largo plazo en ~/Cerebro/."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Término o concepto a buscar en el vault",
-                    }
-                },
-                "required": ["query"],
-            },
-        ),
-        types.Tool(
-            name="nova_run_specialist",
-            description=(
-                "Invoca uno de los 185 agentes especializados de Nova: "
-                "Firmware Engineer, Software Architect, AI Engineer, Backend Architect, "
-                "Security Auditor, DevOps Engineer, etc. "
-                "Útil para tareas técnicas profundas que requieren expertise de dominio."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "Tarea a realizar (ej: 'diseña una API REST para un sistema de sensores IoT')",
-                    },
-                    "specialist": {
-                        "type": "string",
-                        "description": "Especialista preferido (opcional, ej: 'Backend Architect', 'AI Engineer')",
-                        "default": "",
-                    },
-                },
-                "required": ["task"],
-            },
-        ),
-        types.Tool(
-            name="nova_git",
-            description=(
-                "Operaciones git sobre el proyecto activo de Nova: "
-                "status, diff, log, commit (con mensaje generado por IA si no se da), pr."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["status", "diff", "log", "commit", "pr"],
-                        "description": "Acción git a ejecutar",
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "Mensaje de commit (solo para action=commit, opcional — se genera con IA si se omite)",
-                        "default": "",
-                    },
-                },
-                "required": ["action"],
-            },
-        ),
-        types.Tool(
-            name="nova_agent",
-            description=(
-                "Ejecuta el loop agéntico autónomo de Nova: Plan → Execute → Verify. "
-                "Nova genera un plan numerado, lo ejecuta usando sus 48+ herramientas "
-                "(sistema, web, git, calendario, clima, código, Blender, memoria, etc.) "
-                "y devuelve el resultado con el log de pasos. "
-                "Ideal para tareas multi-paso que requieren combinar varias herramientas."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "goal": {
-                        "type": "string",
-                        "description": "Objetivo en lenguaje natural (ej: 'buscá el precio de bitcoin y guardalo en el Cerebro')",
-                    },
-                    "max_iter": {
-                        "type": "integer",
-                        "description": "Máximo de iteraciones del loop (default: 6)",
-                        "default": 6,
-                    },
-                },
-                "required": ["goal"],
-            },
-        ),
-    ]
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    if not _NOVA_READY:
-        return [types.TextContent(type="text", text="Nova no está inicializada correctamente.")]
-
+            "required": ["query"]
+        }
+    })
+    
     try:
-        result = await _dispatch_tool(name, arguments)
+        from nova.tools.nova_skills import _TOOL_CATALOG
+        from nova.tools.nova_tools_schemas import get_tool_schemas
+        
+        # We can also dynamically expose all catalog tools
+        schemas = get_tool_schemas()
+        for t in schemas:
+            # get_tool_schemas might return openai-style functions. Convert to MCP:
+            # openai: {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
+            if t.get("type") == "function":
+                func = t["function"]
+                tools.append({
+                    "name": func["name"],
+                    "description": func.get("description", ""),
+                    "inputSchema": func.get("parameters", {"type": "object", "properties": {}})
+                })
     except Exception as e:
-        result = f"Error ejecutando {name}: {e}"
+        log.warning(f"Could not load tool catalog: {e}")
+        
+    return tools
 
-    return [types.TextContent(type="text", text=str(result))]
+def handle_initialize(msg_id):
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {
+                "tools": {}
+            },
+            "serverInfo": {
+                "name": "nova-mcp",
+                "version": "3.10"
+            }
+        }
+    }
 
+def handle_tools_list(msg_id):
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {
+            "tools": _get_tool_list()
+        }
+    }
 
-async def _dispatch_tool(name: str, args: dict) -> str:
-    if name == "nova_query":
-        query = args.get("query", "").strip()
-        if not query:
-            return "Query vacía."
-        resp = _skills.dispatch(query)
-        if resp:
-            return resp
-        if _router:
-            r = _router.route(
-                messages=[{"role": "user", "content": query}],
-                force_tier=2,
-            )
-            return r["response"]
-        return "No pude procesar la consulta."
-
-    elif name == "nova_remember":
-        fact = args.get("fact", "").strip()
-        if not fact:
-            return "Hecho vacío."
-        try:
-            from nova.core.nova_memory import save_turn
-            save_turn("user", f"[Recuerda]: {fact}")
-            return f"Guardado en memoria: {fact}"
-        except Exception as e:
-            return f"No pude guardar: {e}"
-
-    elif name == "nova_search_cerebro":
-        query = args.get("query", "").strip()
-        if not query:
-            return "Query vacía."
-        if _cerebro:
-            try:
-                results = _cerebro.buscar(query)
-                if not results:
-                    return f"No encontré '{query}' en el Cerebro."
-                return "\n\n".join(str(r) for r in results[:3])
-            except Exception as e:
-                return f"Error buscando en Cerebro: {e}"
-        return "Cerebro/Obsidian no está disponible."
-
-    elif name == "nova_run_specialist":
-        task = args.get("task", "").strip()
-        specialist = args.get("specialist", "").strip()
-        if not task:
-            return "Tarea vacía."
-        query = f"actúa como {specialist} y {task}" if specialist else task
-        resp = _skills.dispatch(query)
-        if resp:
-            return resp
-        return "No pude invocar el especialista."
-
-    elif name == "nova_git":
-        action = args.get("action", "status")
-        msg = args.get("message", "")
-        from nova.tools.nova_skills import (
-            skill_git_status, skill_git_diff, skill_git_log,
-            skill_git_commit, skill_git_pr,
-        )
-        if action == "status":
-            return skill_git_status()
-        elif action == "diff":
-            return skill_git_diff()
-        elif action == "log":
-            return skill_git_log()
-        elif action == "commit":
-            return skill_git_commit(msg or "")
-        elif action == "pr":
-            return skill_git_pr()
-        return f"Acción desconocida: {action}"
-
-    elif name == "nova_agent":
-        goal = args.get("goal", "").strip()
-        if not goal:
-            return "Objetivo vacío."
-        if not _router:
-            return "Router no disponible."
-        try:
-            from nova.tools.nova_tools_schemas import get_tool_schemas
+def handle_tools_call(msg_id, params):
+    name = params.get("name")
+    args = params.get("arguments", {})
+    
+    result_text = ""
+    
+    try:
+        if name == "ask_nova":
+            router = _get_router()
+            if router:
+                query = args.get("query", "")
+                resp = router.route([{"role": "user", "content": query}])
+                result_text = resp.get("response", "No response.")
+            else:
+                result_text = "Error: Nova Router not available."
+        else:
             from nova.tools.nova_skills import execute_tool
-            schemas = get_tool_schemas()
-            log_lines: list[str] = []
-            def _cb(msg: str) -> None:
-                log_lines.append(msg)
-            result = _router.route_agentic(
-                goal=goal,
-                tools=schemas,
-                executor_fn=execute_tool,
-                progress_cb=_cb,
-                max_iter=int(args.get("max_iter", 6)),
-                force_tier=2,
-            )
-            plan    = result.get("plan", "")
-            response = result.get("response", "")
-            iters   = result.get("iters", 0)
-            log_text = "\n".join(log_lines)
-            return (
-                f"📋 Plan:\n{plan}\n\n"
-                f"🔄 Log ({iters} iteraciones):\n{log_text}\n\n"
-                f"✅ Resultado:\n{response}"
-            )
-        except Exception as e:
-            return f"Error en agente: {e}"
+            # execute_tool returns dict with {"output": ...} or throws
+            res = execute_tool(name, args)
+            result_text = res.get("output", str(res))
+    except Exception as e:
+        log.error(f"Error executing {name}: {traceback.format_exc()}")
+        result_text = f"Error: {str(e)}"
+        
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {
+            "content": [
+                {"type": "text", "text": str(result_text)}
+            ]
+        }
+    }
 
-    return f"Tool desconocida: {name}"
+def process_message(line):
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError:
+        log.warning("Invalid JSON received")
+        return None
+        
+    method = msg.get("method")
+    msg_id = msg.get("id")
+    
+    if method == "initialize":
+        return handle_initialize(msg_id)
+    elif method == "notifications/initialized":
+        return None
+    elif method == "tools/list":
+        return handle_tools_list(msg_id)
+    elif method == "tools/call":
+        return handle_tools_call(msg_id, msg.get("params", {}))
+    elif method == "ping":
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
+    elif msg_id is not None:
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32601,
+                "message": "Method not found"
+            }
+        }
+    return None
 
-
-# ─── Entry point ─────────────────────────────────────────────────────────────
-
-async def main():
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
-
+def main():
+    log.info("Starting Nova MCP Server on stdio...")
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+            
+        response = process_message(line)
+        if response:
+            try:
+                sys.stdout.write(json.dumps(response) + "\n")
+                sys.stdout.flush()
+            except Exception as e:
+                log.error(f"Failed to write response: {e}")
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()

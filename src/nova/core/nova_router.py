@@ -205,8 +205,14 @@ _SYSTEM_PROMPT_TEMPLATE = (
     "7. NUNCA inventes datos personales: nombres, fechas, direcciones. "
     "Si no están en memoria, di: 'No encontré esa información en mi memoria.'\n"
     "8. Cuando el usuario te reporta un problema técnico (algo no funciona, se repite, etc.), "
-    "NUNCA actives ni simules activar una función. Solo pregunta qué necesita exactamente."
+    "NUNCA actives ni simules activar una función. Solo pregunta qué necesita exactamente.\n"
+    "9. Eres un asistente integrado en el sistema operativo. TIENES capacidades reales e integradas "
+    "para ejecutar comandos, leer archivos, usar git, controlar domótica, interactuar con el navegador "
+    "y abrir aplicaciones. Si el usuario te pide una tarea que requiere estas habilidades, asume SIEMPRE "
+    "que puedes hacerla y responde afirmativamente de forma natural. El entorno interceptará y "
+    "ejecutará las acciones por ti. NUNCA digas 'no tengo acceso al sistema' o 'soy un asistente de texto'."
 )
+
 
 
 def _build_system_prompt() -> str:
@@ -1059,7 +1065,7 @@ class NovaRouter:
 
         # ── PHASE 1: PLAN ────────────────────────────────────────────────────
         plan_sys = (
-            "Eres Nova, asistente IA personal. "
+            f"{self.system_prompt}\n\n"
             "Antes de ejecutar cualquier acción, creá un plan numerado claro. "
             "Muestra el plan completo. Luego lo ejecutarás paso a paso."
         )
@@ -1094,7 +1100,7 @@ class NovaRouter:
             {
                 "role": "system",
                 "content": (
-                    "Eres Nova, asistente IA personal. "
+                    f"{self.system_prompt}\n\n"
                     "Ejecutá el objetivo usando las herramientas disponibles. "
                     "Llamá UNA herramienta a la vez. Cuando termines, respondé con un resumen."
                 ),
@@ -1908,6 +1914,53 @@ class NovaRouter:
     def get_model_stats(self) -> dict:
         """Retorna las estadísticas de uso de los modelos."""
         return self.stats_tracker.get_stats()
+
+    def route_parallel(self, tasks: list[dict], max_workers: int = 3) -> list[dict]:
+        """
+        Ejecuta múltiples consultas al router en paralelo consolidando especialistas.
+        Cada dict en tasks debe tener un 'messages', y opcionalmente 'force_tier', 'agentic', 'max_iter', etc.
+        Si 'agentic' es True, invoca route_agentic(), de lo contrario route().
+        Retorna la lista de resultados en el mismo orden.
+        """
+        import concurrent.futures
+        
+        def _execute_task(task_spec: dict) -> dict:
+            try:
+                if task_spec.get("agentic", False):
+                    # Si es agentic se asume que hay tools y executor_fn proveídos en task_spec o globalmente
+                    # Para simplificar, intentamos usar un fallback si no vienen en el task_spec
+                    from nova.tools.nova_tools_schemas import get_tool_schemas
+                    from nova.tools.nova_skills import execute_tool
+                    tools = task_spec.get("tools", get_tool_schemas())
+                    executor = task_spec.get("executor_fn", execute_tool)
+                    return self.route_agentic(
+                        goal=task_spec.get("goal", self._last_user(task_spec.get("messages", []))),
+                        tools=tools,
+                        executor_fn=executor,
+                        max_iter=task_spec.get("max_iter", 3),
+                        force_tier=task_spec.get("force_tier", 2)
+                    )
+                else:
+                    return self.route(
+                        messages=task_spec.get("messages", []),
+                        force_tier=task_spec.get("force_tier"),
+                        max_tokens=task_spec.get("max_tokens", 2048),
+                        temperature=task_spec.get("temperature", 0.7)
+                    )
+            except Exception as e:
+                return {"response": f"Error en subagente: {e}", "error": str(e)}
+
+        results = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_execute_task, t) for t in tasks]
+            for future in concurrent.futures.as_completed(futures):
+                pass  # Wait for all to complete
+            
+            # Preserve order
+            for future in futures:
+                results.append(future.result())
+                
+        return results
 
     @staticmethod
     def _last_user(messages: list[dict]) -> str:

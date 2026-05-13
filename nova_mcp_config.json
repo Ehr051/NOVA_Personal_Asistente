@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "nova": {
+      "command": "python",
+      "args": ["-m", "nova.mcp"],
+      "cwd": "/Users/mac/Desktop/NOVA_Personal_Asistente",
+      "env": {}
+    }
+  }
+}
+// Copy this snippet into ~/.claude/mcp.json or your project's .claude.json

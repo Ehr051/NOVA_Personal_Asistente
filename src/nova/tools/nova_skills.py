@@ -3174,58 +3174,32 @@ def _git_run(*args, cwd: str | None = None) -> tuple[str, int]:
 
 
 def skill_git_status(texto: str = "") -> str:
-    """Muestra el estado del repositorio git del proyecto activo."""
-    out, rc = _git_run("status", "--short", "--branch")
-    if rc != 0:
-        return f"No es un repositorio git o hubo un error:\n{out}"
-    if not out.strip():
-        return "El repositorio está limpio, Señor. No hay cambios pendientes."
-    lines = out.splitlines()
-    rama = lines[0].lstrip("#").strip() if lines else ""
-    cambios = [l for l in lines[1:] if l.strip()]
-    if not cambios:
-        return f"Repositorio limpio en {rama}."
-    partes = [f"Estado del repositorio — {rama}:"]
-    for c in cambios[:20]:
-        estado, archivo = c[:2].strip(), c[3:].strip()
-        partes.append(f"  {estado}  {archivo}")
-    if len(cambios) > 20:
-        partes.append(f"  ... y {len(cambios)-20} cambios más")
-    return "\n".join(partes)
+    from nova.tools.nova_git import git_status, is_git_repo
+    if not is_git_repo():
+        return "No estás en un repositorio git."
+    return git_status() or "Sin cambios."
 
 
 def skill_git_diff(texto: str = "") -> str:
-    """Muestra el diff de cambios no commiteados (máx 80 líneas)."""
-    out, rc = _git_run("diff", "--stat")
-    stat = out.strip()
-    out2, _ = _git_run("diff", "--unified=3")
-    lines = out2.splitlines()
-    if not lines and not stat:
-        out3, _ = _git_run("diff", "--cached", "--stat")
-        if out3.strip():
-            return f"Solo hay cambios en staging:\n{out3}"
-        return "No hay cambios para mostrar, Señor."
-    MAX = 80
-    if len(lines) > MAX:
-        recortado = f"\n... [{len(lines)-MAX} líneas omitidas] ..."
-        lines = lines[:MAX]
-    else:
-        recortado = ""
-    return f"{stat}\n\n" + "\n".join(lines) + recortado
+    from nova.tools.nova_git import git_diff, is_git_repo
+    if not is_git_repo():
+        return "No estás en un repositorio git."
+    staged = "staged" in texto.lower() or "preparado" in texto.lower()
+    return git_diff(staged=staged) or "Sin diferencias."
 
 
 def skill_git_log(texto: str = "") -> str:
-    """Muestra el historial reciente de commits."""
-    n = 10
-    m = re.search(r"(\d+)\s+(?:últimos?|últimas?|commits?|cambios?)", (texto or "").lower())
-    if m:
-        n = min(int(m.group(1)), 30)
-    out, rc = _git_run("log", f"--oneline", f"-{n}")
-    if rc != 0:
-        return f"No pude leer el historial: {out}"
-    if not out.strip():
-        return "No hay commits en este repositorio aún."
-    return f"Últimos {n} commits:\n" + out
+    from nova.tools.nova_git import git_log, is_git_repo
+    if not is_git_repo():
+        return "No estás en un repositorio git."
+    return git_log(n=7)
+
+
+def skill_git_commit_suggest(texto: str = "") -> str:
+    from nova.tools.nova_git import git_suggest_commit, is_git_repo
+    if not is_git_repo():
+        return "No estás en un repositorio git."
+    return git_suggest_commit()
 
 
 def skill_git_commit(texto: str = "") -> str:
@@ -3897,15 +3871,11 @@ _INTENTS: list[tuple] = [
     (r"(?:escrib[eé]\s+en\s+(?:el\s+)?cerebro)\s*:?\s*(.+)",                 obsidian_nota_nueva, 1),
 
     # ── Git-aware workflow ────────────────────────────────────
-    (r"(?:git\s+)?(?:estado|status)\s+(?:del?\s+)?(?:repo|repositorio|git|proyecto)",
-                                                                               skill_git_status, None),
-    (r"(?:qué\s+)?(?:cambios?\s+(?:hay|tengo|pendientes?)|modificaciones?\s+(?:hay|tengo))"
-     r"(?:\s+en\s+git)?",                                                      skill_git_status, None),
-    (r"git\s+status",                                                          skill_git_status, None),
-    (r"(?:git\s+)?diff(?:erencias?)?(?:\s+de\s+(?:git|cambios?))?",           skill_git_diff, None),
-    (r"(?:ver|mostrar|dame)\s+(?:el\s+)?diff",                                skill_git_diff, None),
-    (r"(?:git\s+)?log(?:\s+de\s+git)?|historial\s+de\s+commits?",             skill_git_log, 0),
-    (r"(?:últimos?\s+\d+\s+commits?|commits?\s+recientes?)",                   skill_git_log, 0),
+    (r"(?:git\s+)?(?:estado|status|cambios?|modificaciones?)\s+(?:del?\s+)?(?:repo|repositorio|git)", skill_git_status, 0),
+    (r"(?:qué\s+)?(?:cambié|modifiqué|toqué|cambiaste)\s+(?:en\s+el\s+)?(?:repo|código|proyecto)?", skill_git_status, 0),
+    (r"(?:git\s+)?diff|diferencias?\s+(?:del?\s+)?(?:repo|código|git)", skill_git_diff, 0),
+    (r"(?:git\s+)?log|(?:últimos?|recientes?)\s+commits?|historial\s+(?:de\s+)?(?:git|commits?)", skill_git_log, 0),
+    (r"(?:sugerí?|proponé?|generá?|escribí?)\s+(?:un\s+)?(?:mensaje\s+de\s+)?commit|commit\s+message", skill_git_commit_suggest, 0),
     (r"(?:haz?\s+(?:un\s+)?commit|git\s+commit|guarda[r]?\s+(?:los?\s+)?cambios?)"
      r"(?:\s+.{0,100})?",                                                      skill_git_commit, 0),
     (r"(?:genera[r]?\s+(?:una?\s+)?(?:descripción\s+de\s+)?pr|pull\s+request|"
@@ -4760,12 +4730,10 @@ _TOOL_CATALOG: dict[str, tuple] = {
                         skill_planear_misiones, "text"),
     "ejecutar_misiones": ("Ejecutar las misiones propuestas (todas o seleccionadas por número)",
                         skill_ejecutar_misiones, "text"),
-    "git_status":      ("Ver estado del repositorio git: cambios pendientes, rama actual",
-                        skill_git_status, None),
-    "git_diff":        ("Ver diff de cambios no commiteados en el repositorio git",
-                        skill_git_diff, None),
-    "git_log":         ("Ver historial de commits del repositorio git",
-                        skill_git_log, "text"),
+    "git_status":      ("Estado del repositorio git actual", skill_git_status, None),
+    "git_diff":        ("Diff de cambios en el repositorio git", skill_git_diff, "text"),
+    "git_log":         ("Historial de commits recientes", skill_git_log, None),
+    "git_suggest_commit": ("Sugiere mensaje de commit para los cambios actuales", skill_git_commit_suggest, None),
     "git_commit":      ("Hacer commit con mensaje dado o generado automáticamente por IA",
                         skill_git_commit, "text"),
     "git_pr":          ("Generar descripción de Pull Request basada en los commits del branch",
