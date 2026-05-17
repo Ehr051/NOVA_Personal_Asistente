@@ -162,8 +162,9 @@ class AlarmManager:
             f'display notification "{message}" with title "⏰ Nova Alarma"'
         ])
 
-        # Sonar beep
+        # Sonar beep y sonido en Mac
         print("\a")  # Beep
+        subprocess.run(["afplay", "/System/Library/Sounds/Glass.aiff"])
 
         with self._lock:
             if alarm_id in self.alarms:

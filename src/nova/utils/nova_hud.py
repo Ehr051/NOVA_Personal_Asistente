@@ -515,6 +515,11 @@ class NovaWindow(QWidget):
         # Archivo pendiente para adjuntar al próximo mensaje
         self._pending_attachment: dict | None = None   # {"name", "type", "content"}
 
+        self._focus_mode = False
+        self._bg_overlay = QWidget(self)
+        self._bg_overlay.setStyleSheet("background: rgba(0, 12, 28, 220);")
+        self._bg_overlay.hide()
+
         self.setMouseTracking(True)
         self._setup_window()
         self._setup_webview()
@@ -665,39 +670,87 @@ class NovaWindow(QWidget):
 
     def _relayout(self):
         """Reposiciona todos los widgets según la escala y log_h actuales."""
-        d = self._dims()
-        s, w = d["s"], d["w"]
-
-        # Animation
-        self._view.setFixedSize(w, d["h_anim"])
-        self._view.setZoomFactor(s)
-
-        # Metrics
-        self._metrics_bar.setGeometry(0, d["h_anim"], w, d["h_m"])
-
-        # Strip
-        self._strip.setGeometry(0, d["h_anim"] + d["h_m"], w, d["h_st"])
-        self._chevron.setGeometry(0, 0, w, d["h_st"])
-
-        # Panel
-        y0   = d["h_comp"]
-        pad  = max(3, int(4 * s))
-        self._log.setGeometry(pad, y0 + pad, w - pad*2, d["h_log"])
-        y_in = y0 + pad + d["h_log"] + max(3, int(6*s))
-        btn_w = max(20, int(32*s))
-        badge_h = max(14, int(16*s))
-        self._attach_badge.setGeometry(pad, y_in - badge_h - 2, w - pad*2, badge_h)
-        self._input.setGeometry(pad, y_in, w - btn_w*3 - pad*2, d["h_inp"])
-        self._attach_btn.setGeometry(w - btn_w*3, y_in, d["h_inp"], d["h_inp"])
-        self._send_btn.setGeometry(w - btn_w*2, y_in, d["h_inp"], d["h_inp"])
-        self._close_btn.setGeometry(w - btn_w, y_in, d["h_inp"], d["h_inp"])
-
-        # Window size
-        h_total = d["h_full"] if self._panel_open else d["h_comp"]
-        self.setMinimumSize(0, 0)
-        self.setMaximumSize(16777215, 16777215)
-        self.resize(w, h_total)
-        self.setFixedWidth(w)
+        if hasattr(self, '_focus_mode') and self._focus_mode:
+            from PyQt5.QtWidgets import QApplication
+            screen = QApplication.primaryScreen().geometry()
+            sw = screen.width()
+            sh = screen.height()
+            
+            col_w = min(1000, sw - 100)
+            pad_x = (sw - col_w) // 2
+            
+            # Window size (full screen)
+            self.setMinimumSize(sw, sh)
+            self.setMaximumSize(sw, sh)
+            self.resize(sw, sh)
+            self.move(0, 0)
+            
+            # Overlay
+            self._bg_overlay.setGeometry(0, 0, sw, sh)
+            
+            # Animation
+            anim_h = 200
+            self._view.setGeometry(pad_x, 50, col_w, anim_h)
+            self._view.setZoomFactor(1.0)
+            
+            # Metrics
+            self._metrics_bar.setGeometry(pad_x, 50 + anim_h, col_w, 20)
+            
+            # Panel (Log + Input)
+            log_y = 50 + anim_h + 30
+            log_h = sh - log_y - 120
+            pad = 10
+            self._log.setGeometry(pad_x + pad, log_y, col_w - pad*2, log_h)
+            
+            y_in = log_y + log_h + 20
+            btn_w = 40
+            badge_h = 16
+            
+            self._attach_badge.setGeometry(pad_x + pad, y_in - badge_h - 2, col_w - pad*2, badge_h)
+            self._input.setGeometry(pad_x + pad, y_in, col_w - btn_w*3 - pad*2, 40)
+            self._attach_btn.setGeometry(pad_x + col_w - btn_w*3, y_in, 40, 40)
+            self._send_btn.setGeometry(pad_x + col_w - btn_w*2, y_in, 40, 40)
+            self._close_btn.setGeometry(pad_x + col_w - btn_w, y_in, 40, 40)
+            
+            # Chevron & Strip (hide or move)
+            self._chevron.setGeometry(0, 0, 0, 0)
+            self._strip.setGeometry(0, 0, 0, 0)
+            
+        else:
+            d = self._dims()
+            s, w = d["s"], d["w"]
+            
+            # Animation
+            self._view.setFixedSize(w, d["h_anim"])
+            self._view.setZoomFactor(s)
+            
+            # Metrics
+            self._metrics_bar.setGeometry(0, d["h_anim"], w, d["h_m"])
+            
+            # Strip
+            self._strip.setGeometry(0, d["h_anim"] + d["h_m"], w, d["h_st"])
+            self._chevron.setGeometry(0, 0, w, d["h_st"])
+            
+            # Panel
+            y0   = d["h_comp"]
+            pad  = max(3, int(4 * s))
+            self._log.setGeometry(pad, y0 + pad, w - pad*2, d["h_log"])
+            y_in = y0 + pad + d["h_log"] + max(3, int(6*s))
+            btn_w = max(20, int(32*s))
+            badge_h = max(14, int(16*s))
+            self._attach_badge.setGeometry(pad, y_in - badge_h - 2, w - pad*2, badge_h)
+            self._input.setGeometry(pad, y_in, w - btn_w*3 - pad*2, d["h_inp"])
+            self._focus_btn.setGeometry(w - btn_w*4, y_in, d["h_inp"], d["h_inp"])
+            self._attach_btn.setGeometry(w - btn_w*3, y_in, d["h_inp"], d["h_inp"])
+            self._send_btn.setGeometry(w - btn_w*2, y_in, d["h_inp"], d["h_inp"])
+            self._close_btn.setGeometry(w - btn_w, y_in, d["h_inp"], d["h_inp"])
+            
+            # Window size
+            h_total = d["h_full"] if self._panel_open else d["h_comp"]
+            self.setMinimumSize(0, 0)
+            self.setMaximumSize(16777215, 16777215)
+            self.resize(w, h_total)
+            self.setFixedWidth(w)
 
     def _apply_scale(self, delta: int = 0):
         """Cambia el índice de escala y redibuja. delta=+1/-1 o 0 para refresh."""
@@ -705,6 +758,17 @@ class NovaWindow(QWidget):
         self._relayout()
         pct = int(_SCALE_STEPS[self._scale_idx] * 100)
         self._metrics_bar.setToolTip(f"Tamaño: {pct}%  (scroll ↕ para cambiar)")
+
+    def toggle_focus_mode(self):
+        self._focus_mode = not self._focus_mode
+        if self._focus_mode:
+            self._old_geometry = self.geometry()
+            self._bg_overlay.show()
+        else:
+            self._bg_overlay.hide()
+            if hasattr(self, '_old_geometry'):
+                self.setGeometry(self._old_geometry)
+        self._relayout()
 
     # ── Panel expandible (log + input) ───────────────────────────────────────
 
@@ -724,6 +788,13 @@ class NovaWindow(QWidget):
         self._input.setStyleSheet(_SS_INPUT)
         self._input.returnPressed.connect(self._on_text_submit)
         self._input.hide()
+
+        self._focus_btn = QPushButton("⛶", self)
+        self._focus_btn.setGeometry(d["w"] - 138, y_input, d["h_inp"], d["h_inp"])
+        self._focus_btn.setStyleSheet(_SS_BTN)
+        self._focus_btn.setToolTip("Modo Enfoque (F11)")
+        self._focus_btn.clicked.connect(self.toggle_focus_mode)
+        self._focus_btn.hide()
 
         self._attach_btn = QPushButton("📎", self)
         self._attach_btn.setGeometry(d["w"] - 104, y_input, d["h_inp"], d["h_inp"])
@@ -758,6 +829,7 @@ class NovaWindow(QWidget):
         visible = self._panel_open
         self._log.setVisible(visible)
         self._input.setVisible(visible)
+        self._focus_btn.setVisible(visible)
         self._attach_btn.setVisible(visible)
         self._send_btn.setVisible(visible)
         self._close_btn.setVisible(visible)
@@ -777,16 +849,41 @@ class NovaWindow(QWidget):
         """Añade una línea al log. who = 'Nova' | 'Tú'"""
         if not text.strip():
             return
-        display = text if len(text) <= 140 else text[:137] + "…"
-        # Escapar HTML básico
+            
+        # Truncar solo si no estamos en modo focus
+        is_focus = hasattr(self, '_focus_mode') and self._focus_mode
+        display = text
+        if not is_focus and len(text) > 140:
+            display = text[:137] + "…"
+            
+        # Detectar protocolo de imagen
+        img_html = ""
+        if "__HUD_IMG__:" in text:
+            parts = text.split(":")
+            if len(parts) >= 4:
+                # __HUD_IMG__:name:mime:b64[::caption]
+                mime = parts[2]
+                b64 = parts[3]
+                # Limitar tamaño de visualización
+                img_html = f'<br/><img src="data:{mime};base64,{b64}" width="300"/><br/>'
+                display = "Imagen:"
+                if len(parts) > 4:
+                    display = parts[4] # Usar el caption como texto
+        
+        # Escapar HTML básico (excepto si es imagen)
         display = display.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        
         if who == "Nova":
             color = "#14c8ff"
             name  = "Nova"
         else:
             color = "#90e890"
             name  = "Tú"
+            
         html = f'<span style="color:{color};"><b>{name}:</b> {display}</span>'
+        if img_html:
+            html += img_html
+            
         self._log.append(html)
         # Auto-scroll
         sb = self._log.verticalScrollBar()
@@ -917,8 +1014,13 @@ class NovaWindow(QWidget):
         return self._panel_open and local_y >= self.height() - 6
 
     def eventFilter(self, obj, event):
-        from PyQt5.QtCore import QEvent
+        from PyQt5.QtCore import QEvent, Qt
         t = event.type()
+
+        if t == QEvent.KeyPress:
+            if event.key() == Qt.Key_F11:
+                self.toggle_focus_mode()
+                return True
 
         if t == QEvent.MouseButtonDblClick:
             self._js("window.nextTheme();")
@@ -1044,6 +1146,12 @@ class NovaWindow(QWidget):
                     self._js(f"window.setTheme({idx});")
                 else:
                     self._js(f"window.setTheme({int(v)});")
+            # Comando de modo focus
+            if "focus_mode" in state:
+                mode = state["focus_mode"]
+                if mode != self._focus_mode:
+                    self.toggle_focus_mode()
+                    
             # Log de conversación
             if "response_text" in state and state["response_text"]:
                 self.add_log("Nova", state["response_text"])

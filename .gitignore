@@ -57,3 +57,6 @@ tests/model_stats.json
 docs/NOVA_ROADMAP.md
 docs/WORKFLOW.md
 docs/STATUS.md
+
+# Configuración de tokens (Secretos)
+config/calendar_token.json

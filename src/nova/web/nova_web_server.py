@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
+import subprocess
 import sys
 import threading
 import time
@@ -28,6 +30,112 @@ if str(_SRC) not in sys.path:
 ENV_PATH = _SRC.parent / ".env"
 PLUGINS_DIR = _SRC.parent / "plugins"
 MCP_CONFIG_PATH = _SRC.parent / ".mcp.json"
+NOVA_VERSION = "3.11"
+HISTORY_DB = Path.home() / ".nova" / "web_history.db"
+
+# ─── Auth helper ──────────────────────────────────────────────────────────────
+_WEB_TOKEN = os.getenv("NOVA_WEB_TOKEN", "").strip()
+
+def _check_auth(handler: "NovaWebHandler") -> bool:
+    """Returns True if request is authorized (or no token configured)."""
+    if not _WEB_TOKEN:
+        return True
+    auth = handler.headers.get("Authorization", "")
+    if auth.startswith("Bearer ") and auth[7:] == _WEB_TOKEN:
+        return True
+    # Also check query param ?token=... for SSE/EventSource
+    params = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(handler.path).query))
+    return params.get("token", "") == _WEB_TOKEN
+
+def _deny(handler: "NovaWebHandler") -> None:
+    handler.send_response(401)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("WWW-Authenticate", 'Bearer realm="Nova Dashboard"')
+    handler.end_headers()
+    handler.wfile.write(b'{"error":"Unauthorized - set NOVA_WEB_TOKEN"}')
+
+# ─── History DB ───────────────────────────────────────────────────────────────
+_hist_lock = threading.Lock()
+
+def _hist_db() -> sqlite3.Connection:
+    HISTORY_DB.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(HISTORY_DB), check_same_thread=False)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts      INTEGER NOT NULL,
+            role    TEXT NOT NULL,
+            content TEXT NOT NULL,
+            mode    TEXT DEFAULT 'chat'
+        )
+    """)
+    con.commit()
+    return con
+
+_hdb: sqlite3.Connection | None = None
+
+def _get_hdb() -> sqlite3.Connection:
+    global _hdb
+    if _hdb is None:
+        _hdb = _hist_db()
+    return _hdb
+
+def _save_turn(role: str, content: str, mode: str = "chat") -> None:
+    try:
+        with _hist_lock:
+            db = _get_hdb()
+            db.execute("INSERT INTO history (ts, role, content, mode) VALUES (?,?,?,?)",
+                       (int(time.time()), role, content[:8000], mode))
+            db.commit()
+    except Exception as e:
+        log.debug("History save error: %s", e)
+
+def _load_history(limit: int = 100) -> list[dict]:
+    try:
+        with _hist_lock:
+            db = _get_hdb()
+            rows = db.execute(
+                "SELECT id, ts, role, content, mode FROM history ORDER BY ts DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        return [{"id": r[0], "ts": r[1], "role": r[2],
+                 "content": r[3], "mode": r[4]} for r in reversed(rows)]
+    except Exception:
+        return []
+
+def _clear_history() -> None:
+    try:
+        with _hist_lock:
+            db = _get_hdb()
+            db.execute("DELETE FROM history")
+            db.commit()
+    except Exception:
+        pass
+
+# ─── Health check ─────────────────────────────────────────────────────────────
+def _health_check() -> dict:
+    status: dict[str, Any] = {}
+    # Daemon
+    status["daemon"] = _daemon is not None
+    # Router / Ollama
+    status["router"] = _router is not None
+    try:
+        import urllib.request as _ur
+        _ur.urlopen(os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").replace("/v1", ""),
+                    timeout=1).close()
+        status["ollama"] = True
+    except Exception:
+        status["ollama"] = False
+    # Obsidian
+    try:
+        from nova.connectors.nova_cerebro import _api_disponible
+        status["obsidian"] = _api_disponible()
+    except Exception:
+        status["obsidian"] = False
+    # Telegram
+    tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    status["telegram"] = bool(tg_token and tg_token != "123456789:AAF...")
+    return status
 
 _router   = None
 _skills   = None
@@ -203,6 +311,32 @@ _HTML = r'''<!DOCTYPE html>
   .cfg-tab.active { background: rgba(16,163,127,0.15); border-color: var(--accent); color: var(--accent); }
   .cfg-section { display: none; }
   .cfg-section.active { display: block; }
+
+  /* Health dots */
+  .health-bar { padding: 10px 20px 16px; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); margin-top: auto; }
+  .health-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted); }
+  .hdot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; transition: background 0.4s; }
+  .hdot.ok { background: #10a37f; box-shadow: 0 0 6px rgba(16,163,127,0.6); }
+  .hdot.warn { background: #f59e0b; }
+  .hdot.err { background: #ef4444; }
+  .hdot.unk { background: #6b7280; }
+
+  /* History view */
+  .hist-item { background: var(--bg-msg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; cursor: pointer; transition: border-color 0.2s; }
+  .hist-item:hover { border-color: var(--accent); }
+  .hist-item .hi-role { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .hist-item .hi-role.user { color: #5536d6; }
+  .hist-item .hi-role.assistant { color: var(--accent); }
+  .hist-item .hi-content { font-size: 13px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hist-item .hi-ts { font-size: 10px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono); }
+
+  /* About view */
+  .about-badge { display: inline-block; background: rgba(16,163,127,0.15); border: 1px solid var(--accent); color: var(--accent); padding: 2px 10px; border-radius: 20px; font-size: 12px; font-family: var(--font-mono); margin-left: 10px; vertical-align: middle; }
+  .comp-row td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .comp-row td:first-child { color: var(--text-muted); font-size: 12px; }
+  .dot-yes { color: #10a37f; font-weight: bold; }
+  .dot-no  { color: #ef4444; }
+  .dot-par { color: #f59e0b; }
 </style>
 </head>
 <body>
@@ -215,7 +349,17 @@ _HTML = r'''<!DOCTYPE html>
     <div class="nav-item active" onclick="switchTab('chat')">💬 Chat & Agente</div>
     <div class="nav-item" onclick="switchTab('skills')">🧩 Skills & MCPs</div>
     <div class="nav-item" onclick="switchTab('config')">⚙️ Configuración</div>
+    <div class="nav-item" onclick="switchTab('history')">🕒 Historial</div>
     <div class="nav-item" onclick="switchTab('logs')">📝 Logs & Memoria</div>
+    <div class="nav-item" onclick="switchTab('about')">🚀 Sistema & Info</div>
+  </div>
+
+  <!-- Health indicator dots -->
+  <div class="health-bar">
+    <div class="health-row"><div class="hdot unk" id="hd-daemon"></div>Nova Daemon</div>
+    <div class="health-row"><div class="hdot unk" id="hd-ollama"></div>Ollama Local</div>
+    <div class="health-row"><div class="hdot unk" id="hd-obsidian"></div>Obsidian API</div>
+    <div class="health-row"><div class="hdot unk" id="hd-telegram"></div>Telegram Bot</div>
   </div>
 </div>
 
@@ -536,12 +680,110 @@ _HTML = r'''<!DOCTYPE html>
 
   <!-- LOGS VIEW -->
   <div id="view-logs" class="view dashboard-view">
-    <div class="dashboard-title">📝 System Status & Memory</div>
+    <div class="dashboard-title">📝 System Status &amp; Memory</div>
     <div class="card">
       <div class="card-title">Diagnóstico</div>
       <div id="status-content" class="markdown-body" style="color: var(--text-muted); font-family: var(--font-mono); font-size: 13px;">
         Cargando métricas...
       </div>
+    </div>
+  </div>
+
+  <!-- HISTORY VIEW -->
+  <div id="view-history" class="view dashboard-view">
+    <div class="dashboard-title" style="display:flex;justify-content:space-between;align-items:center;">
+      <span>🕒 Historial de Conversaciones</span>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-small" onclick="exportHistory()">⬇️ Exportar .md</button>
+        <button class="btn btn-small" style="border-color:#ef4444;color:#ef4444;" onclick="clearHistory()">🗑️ Limpiar</button>
+      </div>
+    </div>
+    <div style="margin-bottom:16px;display:flex;gap:10px;align-items:center;">
+      <input type="text" id="hist-search" placeholder="Buscar en historial..." oninput="filterHistory()"
+        style="flex:1;background:var(--bg-msg);border:1px solid var(--border);color:white;padding:8px 12px;border-radius:6px;font-size:13px;outline:none;">
+      <select id="hist-filter" onchange="filterHistory()"
+        style="background:var(--bg-msg);border:1px solid var(--border);color:var(--text-muted);padding:8px 12px;border-radius:6px;font-size:13px;outline:none;">
+        <option value="all">Todos los roles</option>
+        <option value="user">Solo usuario</option>
+        <option value="assistant">Solo Nova</option>
+      </select>
+    </div>
+    <div id="hist-list" style="display:flex;flex-direction:column;gap:8px;">
+      <div style="color:var(--text-muted);text-align:center;padding:40px;font-size:14px;">Cargando historial...</div>
+    </div>
+  </div>
+
+  <!-- ABOUT / SYSTEM VIEW -->
+  <div id="view-about" class="view dashboard-view">
+    <div class="dashboard-title">🚀 Sistema &amp; Info</div>
+    <div class="card-grid" style="grid-template-columns:1fr 1fr;">
+
+      <div class="card">
+        <div class="card-title" style="font-size:15px;">Nova Command Center <span class="about-badge" id="about-version">v3.11</span></div>
+        <div class="card-desc" style="margin-top:10px;line-height:1.7;">
+          Asistente personal con control por voz, visión, memoria neuronal,<br>
+          agentes especializados y automatización. Funciona 100% offline con Ollama.
+        </div>
+        <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
+          <a href="https://github.com/Ehr051/NOVA_Personal_Asistente" target="_blank" class="btn btn-small">GitHub ↗</a>
+          <a href="https://github.com/Ehr051/NOVA_Personal_Asistente/releases" target="_blank" class="btn btn-small">Releases ↗</a>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="font-size:14px;">Estado de Servicios</div>
+        <div id="about-health" style="margin-top:10px;display:flex;flex-direction:column;gap:8px;font-size:13px;">
+          Cargando...
+        </div>
+        <button class="btn" style="margin-top:14px;" onclick="refreshHealth()">🔄 Recomprobar</button>
+      </div>
+
+      <div class="card" style="grid-column:1/-1;">
+        <div class="card-title" style="font-size:14px;">📋 Changelog — Sesión Actual</div>
+        <div style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
+          <div style="background:rgba(16,163,127,0.08);border-left:3px solid var(--accent);padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;">
+            <b style="color:var(--accent);">v3.11</b> — Web Dashboard SPA completo: Control Center (LLMs/Voz/Integraciones/Sistema), gestión de MCPs, Mini-IDE de plugins, historial persistente (SQLite), health indicators, autenticación por token.
+          </div>
+          <div style="background:var(--bg-msg);border-left:3px solid var(--border);padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;color:var(--text-muted);">
+            <b>v3.10</b> — Universal Skill Bridge, Apple ecosystem plugin, modelos dinámicos, streaming LLM, agentic loop Plan→Execute→Verify.
+          </div>
+          <div style="background:var(--bg-msg);border-left:3px solid var(--border);padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;color:var(--text-muted);">
+            <b>v3.9</b> — 185 agentes especializados, tool calling nativo (48 schemas OpenAI), diff+confirm por defecto.
+          </div>
+          <div style="background:var(--bg-msg);border-left:3px solid var(--border);padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;color:var(--text-muted);">
+            <b>v3.8</b> — Daemon multi-sesión TCP 7899, LSP semántico (jedi), plugin system (~/.nova/plugins/).
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="grid-column:1/-1;">
+        <div class="card-title" style="font-size:14px;">📊 Nova vs Competidores</div>
+        <div style="overflow-x:auto;margin-top:10px;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="color:var(--text-muted);text-align:left;">
+                <th style="padding:8px 12px;border-bottom:1px solid var(--border);">Feature</th>
+                <th style="padding:8px 12px;border-bottom:1px solid var(--border);text-align:center;">Claude Code</th>
+                <th style="padding:8px 12px;border-bottom:1px solid var(--border);text-align:center;">Cursor</th>
+                <th style="padding:8px 12px;border-bottom:1px solid var(--border);text-align:center;color:var(--accent);">Nova</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="comp-row"><td>Voz con speaker ID</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>Visión cámara/pantalla</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>185 agentes especializados</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>Control por gestos</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>Memoria vectorial persistente</td><td style="text-align:center;" class="dot-par">~</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>Vault Obsidian / Cerebro</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>100% local (Ollama)</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>Web Dashboard SPA</td><td style="text-align:center;" class="dot-yes">✅</td><td style="text-align:center;" class="dot-yes">✅</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>Plugin system</td><td style="text-align:center;" class="dot-yes">✅</td><td style="text-align:center;" class="dot-yes">✅</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+              <tr class="comp-row"><td>Gratis (Groq/Ollama)</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-no">✗</td><td style="text-align:center;" class="dot-yes">✅</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -702,9 +944,133 @@ function switchTab(tabId) {
   event.currentTarget.classList.add('active');
   document.getElementById('view-' + tabId).classList.add('active');
   
-  if(tabId === 'config') loadConfig();
-  if(tabId === 'skills') loadPlugins();
-  if(tabId === 'logs') loadStatus();
+  if(tabId === 'config')  loadConfig();
+  if(tabId === 'skills')  loadPlugins();
+  if(tabId === 'logs')    loadStatus();
+  if(tabId === 'history') loadHistory();
+  if(tabId === 'about')   loadAbout();
+}
+
+// ── Health polling ────────────────────────────────────────────────────────────
+let _healthTimer = null;
+const _DOT_KEYS = ['daemon','ollama','obsidian','telegram'];
+
+async function refreshHealth() {
+  try {
+    const r = await fetch('/api/health');
+    const d = await r.json();
+    _DOT_KEYS.forEach(k => {
+      const el = document.getElementById('hd-' + k);
+      if(!el) return;
+      el.className = 'hdot ' + (d[k] ? 'ok' : 'err');
+    });
+    // also update about panel if visible
+    const ab = document.getElementById('about-health');
+    if(ab) {
+      const labels = {daemon:'Nova Daemon',ollama:'Ollama Local',obsidian:'Obsidian API',telegram:'Telegram Bot'};
+      ab.innerHTML = _DOT_KEYS.map(k =>
+        `<div style="display:flex;align-items:center;gap:8px;">
+           <div class="hdot ${d[k]?'ok':'err'}"></div>
+           <span style="color:${d[k]?'#10a37f':'#ef4444'}">${labels[k]}</span>
+           <span style="color:var(--text-muted);font-size:11px;">${d[k]?'Conectado':'Sin conexión'}</span>
+         </div>`
+      ).join('');
+    }
+  } catch(e) {
+    _DOT_KEYS.forEach(k => {
+      const el = document.getElementById('hd-' + k);
+      if(el) el.className = 'hdot unk';
+    });
+  }
+}
+
+function startHealthPoll() {
+  refreshHealth();
+  _healthTimer = setInterval(refreshHealth, 15000);
+}
+
+// ── History view ──────────────────────────────────────────────────────────────
+let _histAll = [];
+
+async function loadHistory() {
+  try {
+    const r = await fetch('/api/history');
+    _histAll = await r.json();
+    renderHistory(_histAll);
+  } catch(e) {
+    document.getElementById('hist-list').innerHTML =
+      '<div style="color:var(--text-muted);text-align:center;padding:40px;">Error al cargar historial.</div>';
+  }
+}
+
+function renderHistory(items) {
+  const el = document.getElementById('hist-list');
+  if(!items.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);text-align:center;padding:60px;font-size:14px;">Historial vacío — las conversaciones aparecerán aquí automáticamente.</div>';
+    return;
+  }
+  el.innerHTML = items.map(h => {
+    const d = new Date(h.ts * 1000);
+    const ts = d.toLocaleDateString('es-AR') + ' ' + d.toLocaleTimeString('es-AR', {hour:'2-digit',minute:'2-digit'});
+    const preview = (h.content || '').replace(/</g,'&lt;').slice(0, 120);
+    return `<div class="hist-item" onclick="injectToChat('${h.content.replace(/'/g,"\\'").slice(0,200)}')">
+      <div class="hi-role ${h.role}">${h.role === 'user' ? '👤 Usuario' : '🤖 Nova'}</div>
+      <div class="hi-content">${preview}${h.content.length>120?'…':''}</div>
+      <div class="hi-ts">${ts} · modo: ${h.mode||'chat'}</div>
+    </div>`;
+  }).join('');
+}
+
+function filterHistory() {
+  const q = document.getElementById('hist-search').value.toLowerCase();
+  const role = document.getElementById('hist-filter').value;
+  let filtered = _histAll;
+  if(role !== 'all') filtered = filtered.filter(h => h.role === role);
+  if(q) filtered = filtered.filter(h => h.content.toLowerCase().includes(q));
+  renderHistory(filtered);
+}
+
+async function clearHistory() {
+  if(!confirm('¿Borrar todo el historial de conversaciones? Esta acción no se puede deshacer.')) return;
+  try {
+    await fetch('/api/history', { method: 'DELETE' });
+    _histAll = [];
+    renderHistory([]);
+    showToast('Historial borrado');
+  } catch(e) { showToast('Error al borrar'); }
+}
+
+function exportHistory() {
+  if(!_histAll.length) { showToast('Historial vacío'); return; }
+  const lines = _histAll.map(h => {
+    const d = new Date(h.ts * 1000).toLocaleString('es-AR');
+    return `## ${h.role === 'user' ? 'Usuario' : 'Nova'} — ${d}\n\n${h.content}\n`;
+  });
+  const blob = new Blob(['# Historial Nova\n\n' + lines.join('\n---\n\n')], {type:'text/markdown'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `nova-historial-${new Date().toISOString().slice(0,10)}.md`;
+  a.click();
+  showToast('Historial exportado ✓');
+}
+
+function injectToChat(text) {
+  document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(e => e.classList.remove('active'));
+  document.querySelector('.nav-item').classList.add('active');
+  document.getElementById('view-chat').classList.add('active');
+  document.getElementById('input').value = text;
+}
+
+// ── About view ────────────────────────────────────────────────────────────────
+async function loadAbout() {
+  refreshHealth();
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const vEl = document.getElementById('about-version');
+    if(vEl && d.version) vEl.textContent = 'v' + d.version;
+  } catch(e) {}
 }
 
 function setMode(m) {
@@ -1057,6 +1423,7 @@ async function loadStatus() {
 
 // Initial load
 loadStatus();
+startHealthPoll();
 </script>
 </body>
 </html>'''
@@ -1096,6 +1463,11 @@ class NovaWebHandler(BaseHTTPRequestHandler):
         path   = parsed.path
         params = dict(urllib.parse.parse_qsl(parsed.query))
 
+        # Auth check
+        if not _check_auth(self):
+            _deny(self)
+            return
+
         if path == "/":
             self._send_headers("text/html; charset=utf-8")
             self.wfile.write(_HTML.encode())
@@ -1124,6 +1496,7 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             from nova.tools.nova_plugin_loader import loaded_plugins
             data = {
                 "ok":        True,
+                "version":   NOVA_VERSION,
                 "daemon":    _daemon is not None,
                 "router":    _router is not None and _router is not False,
                 "providers": _router._active_provider if _router and _router is not False else "not_initialized",
@@ -1132,6 +1505,14 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             }
             self._send_headers("application/json")
             self.wfile.write(json.dumps(data).encode())
+
+        elif path == "/api/health":
+            self._send_headers("application/json")
+            self.wfile.write(json.dumps(_health_check()).encode())
+
+        elif path == "/api/history":
+            self._send_headers("application/json")
+            self.wfile.write(json.dumps(_load_history()).encode())
 
         elif path == "/api/plugins":
             _init_nova()
@@ -1194,6 +1575,11 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not found")
 
     def do_POST(self):
+        # Auth check
+        if not _check_auth(self):
+            _deny(self)
+            return
+
         if self.path == "/api/config":
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -1245,6 +1631,14 @@ class NovaWebHandler(BaseHTTPRequestHandler):
                 
                 plugin_file = PLUGINS_DIR / f"nova_plugin_{name}.py"
                 
+                # Smoke test: verificar sintaxis antes de guardar
+                try:
+                    compile(code, str(plugin_file), 'exec')
+                except SyntaxError as e:
+                    self._send_headers("application/json", 400)
+                    self.wfile.write(json.dumps({"error": f"Error de sintaxis en el plugin: {e}"}).encode())
+                    return
+                
                 with open(plugin_file, "w", encoding="utf-8") as f:
                     f.write(code)
                     
@@ -1292,20 +1686,33 @@ class NovaWebHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 self._send_headers("application/json", 500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode())
-
+ 
         else:
             self._send_headers("text/plain", 404)
             self.wfile.write(b"Not found")
 
+    def do_DELETE(self):
+        # Auth check
+        if not _check_auth(self):
+            _deny(self)
+            return
+
+        if self.path == "/api/history":
+            _clear_history()
+            self._send_headers("application/json")
+            self.wfile.write(b'{"ok":true}')
+        else:
+            self._send_headers("text/plain", 404)
+            self.wfile.write(b"Not found")
     # ── Chat streaming ────────────────────────────────────────────────────────
     def _stream_chat(self, q: str) -> None:
-        _history.append({"role": "user", "content": q})
+        _save_turn("user", q)
         chunks = []
         try:
             if _skills:
                 skill_resp = _skills.dispatch(q)
                 if skill_resp is not None:
-                    _history.append({"role": "assistant", "content": skill_resp})
+                    _save_turn("assistant", skill_resp)
                     self._write_sse(skill_resp)
                     self._write_sse("[DONE]")
                     return
@@ -1317,7 +1724,7 @@ class NovaWebHandler(BaseHTTPRequestHandler):
                 for chunk in _daemon.chat_stream(q, session="web"):
                     if not self._write_sse(chunk): return
                     chunks.append(chunk)
-                _history.append({"role": "assistant", "content": "".join(chunks)})
+                _save_turn("assistant", "".join(chunks))
                 self._write_sse("[DONE]")
                 return
             except Exception as e:
@@ -1325,10 +1732,10 @@ class NovaWebHandler(BaseHTTPRequestHandler):
 
         if _router:
             try:
-                for chunk in _router.route_stream([{"role": "user", "content": q}]):
+                for chunk in _router.route_stream([{"role": "user", "content": q}], max_tokens=2048):
                     if not self._write_sse(chunk): return
                     chunks.append(chunk)
-                _history.append({"role": "assistant", "content": "".join(chunks)})
+                _save_turn("assistant", "".join(chunks))
             except Exception as e:
                 self._write_sse(f"[ERR]{e}")
 
@@ -1337,7 +1744,7 @@ class NovaWebHandler(BaseHTTPRequestHandler):
     # ── Agent streaming ───────────────────────────────────────────────────────
     def _stream_agent(self, goal: str) -> None:
         import queue as _queue
-        _history.append({"role": "user", "content": f"[agente] {goal}"})
+        _save_turn("user", f"[agente] {goal}", mode="agent")
 
         if not _router:
             self._write_sse("[ERR]Router no disponible")
@@ -1354,7 +1761,7 @@ class NovaWebHandler(BaseHTTPRequestHandler):
                 from nova.tools.nova_skills import skill_agente
                 final = skill_agente(goal, progress_cb=_cb)
                 q.put(f"\n✅ **Resultado Final:**\n\n{final}")
-                _history.append({"role": "assistant", "content": final})
+                _save_turn("assistant", final, mode="agent")
             except Exception as e:
                 q.put(f"[ERR]{e}")
             finally:
@@ -1365,10 +1772,11 @@ class NovaWebHandler(BaseHTTPRequestHandler):
 
         while True:
             try:
-                item = q.get(timeout=60)
+                item = q.get(timeout=10)
             except _queue.Empty:
-                self._write_sse("[ERR]Timeout del agente")
-                break
+                if not t.is_alive():
+                    break
+                continue
             if item is _DONE:
                 break
             if not self._write_sse(str(item)):

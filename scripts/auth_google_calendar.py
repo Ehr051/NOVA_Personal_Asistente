@@ -49,7 +49,7 @@ client_config = {
 }
 
 flow = InstalledAppFlow.from_client_config(client_config, scopes)
-creds = flow.run_local_server(port=8080, prompt="consent", open_browser=True)
+creds = flow.run_local_server(port=8085, prompt="consent", open_browser=True)
 
 # ── Guardar token ──────────────────────────────────────────────────────────────
 token_path = Path(__file__).parent.parent / "config" / "calendar_token.json"

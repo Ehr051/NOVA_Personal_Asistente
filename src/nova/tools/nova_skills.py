@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 # Dependencias opcionales
 try:
-    from ddgs import DDGS
+    from duckduckgo_search import DDGS
     _HAS_DDG = True
 except ImportError:
     _HAS_DDG = False
