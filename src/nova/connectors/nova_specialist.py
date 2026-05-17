@@ -806,6 +806,9 @@ file content here
 
 Start immediately with the first file. No introduction before the first === FILE: === marker.
 Create ALL necessary files: source code, README.md, configuration files, etc.
+
+## Crucial Rule
+Do NOT use placeholders like '# código existente' or '# ...' to omit code. You MUST output the COMPLETE file content every time, even if you are only modifying a small part of it. Failure to do so will break the system.
 """
 
 
@@ -850,7 +853,7 @@ def crear_proyecto(
 
     # Llamar al LLM
     resp: Optional[str] = None
-    groq_models = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"]
+    groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
     for gm in groq_models:
         resp = _call_groq(system, prompt, model=gm)
         if resp:
@@ -1476,7 +1479,7 @@ def mejorar_proyecto_paralelo(
         )
 
         resp = None
-        for gm in ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile"]:
+        for gm in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
             resp = _call_groq(system, prompt, model=gm)
             if resp:
                 break
