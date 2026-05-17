@@ -2198,11 +2198,11 @@ def skill_especialista(texto: str) -> str:
                      "dibujo", "pintura", "render", "genera una imagen", "crea una imagen")
     if any(kw in texto.lower() for kw in _img_keywords):
         return skill_imagen(texto)
-    # Detectar si el usuario quiere solo consejo (sin ejecutar)
-    auto_exec = True
-    if texto.lower().startswith(("solo consejo", "sin ejecutar", "solo explica")):
-        auto_exec = False
-        texto = re.sub(r"^(solo consejo|sin ejecutar|solo explica)\s*[:\-]?\s*", "", texto, flags=re.IGNORECASE)
+    # Detectar si el usuario quiere ejecución automática
+    auto_exec = False
+    if texto.lower().startswith(("ejecuta", "corre", "haz", "ejecutá", "corré")):
+        auto_exec = True
+        texto = re.sub(r"^(ejecuta|corre|haz|ejecutá|corré)\s*[:\-]?\s*", "", texto, flags=re.IGNORECASE)
 
     # Pasar auto_exec al skill
     from nova.connectors.nova_specialist import (

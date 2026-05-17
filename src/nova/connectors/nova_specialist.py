@@ -1099,7 +1099,7 @@ _DOMAIN_MAP = {
 }
 
 
-def skill_especialista(texto: str, auto_exec: bool = True) -> Optional[str]:
+def skill_especialista(texto: str, auto_exec: bool = False) -> Optional[str]:
     """
     Detecta si el usuario quiere un agente especializado y lo invoca.
 
