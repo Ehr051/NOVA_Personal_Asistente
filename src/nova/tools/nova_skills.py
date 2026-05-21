@@ -4783,11 +4783,11 @@ def skill_agente(texto: str, progress_cb=None) -> str:
     if _router is None:
         return "Router no disponible para modo agente."
     try:
-        from nova.tools.nova_tools_schemas import get_tool_schemas
-        schemas = get_tool_schemas()
+        from nova.tools.nova_tools_schemas import get_filtered_tool_schemas
+        schemas = get_filtered_tool_schemas(texto)
 
         def _default_cb(msg: str) -> None:
-            print(msg, flush=True)
+            log.info("[AGENTE PROGRESO] %s", msg)
 
         _cb = progress_cb or _default_cb
         result = _router.route_agentic(

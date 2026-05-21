@@ -478,6 +478,137 @@ _SS_ATTACH_BADGE = f"""
     }}
 """
 
+_SS_FOCUS_CARD = """
+    QFrame {
+        background: rgba(0,10,25,210);
+        border: 1px solid rgba(20,140,200,90);
+        border-radius: 6px;
+    }
+"""
+_SS_FOCUS_LABEL_TITLE = """
+    QLabel {
+        color: rgba(20,200,255,180);
+        font-family: 'Courier New', monospace;
+        font-size: 8px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        background: transparent;
+        border: none;
+        padding: 2px 6px 0px 6px;
+    }
+"""
+_SS_FOCUS_LABEL_VALUE = """
+    QLabel {
+        color: rgba(180,230,255,220);
+        font-family: 'Courier New', monospace;
+        font-size: 10px;
+        background: transparent;
+        border: none;
+        padding: 0px 6px;
+    }
+"""
+_SS_FOCUS_STATUS_OK = """
+    QLabel {
+        color: rgba(50,255,130,230);
+        font-family: 'Courier New', monospace;
+        font-size: 9px;
+        background: rgba(0,40,20,160);
+        border: 1px solid rgba(30,200,100,80);
+        border-radius: 3px;
+        padding: 2px 6px;
+    }
+"""
+_SS_FOCUS_STATUS_ERR = """
+    QLabel {
+        color: rgba(255,80,80,230);
+        font-family: 'Courier New', monospace;
+        font-size: 9px;
+        background: rgba(40,0,0,160);
+        border: 1px solid rgba(200,60,60,80);
+        border-radius: 3px;
+        padding: 2px 6px;
+    }
+"""
+_SS_FOCUS_STATUS_WARN = """
+    QLabel {
+        color: rgba(255,200,50,230);
+        font-family: 'Courier New', monospace;
+        font-size: 9px;
+        background: rgba(40,30,0,160);
+        border: 1px solid rgba(200,160,40,80);
+        border-radius: 3px;
+        padding: 2px 6px;
+    }
+"""
+_SS_SKILL_BTN = """
+    QPushButton {
+        background: rgba(0,15,40,200);
+        color: rgba(20,190,255,200);
+        border: 1px solid rgba(20,120,180,90);
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        font-size: 9px;
+        text-align: left;
+        padding: 4px 8px;
+    }
+    QPushButton:hover {
+        background: rgba(10,50,90,220);
+        border: 1px solid rgba(20,200,255,180);
+        color: rgba(20,220,255,255);
+    }
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+class NotificationToast(QWidget):
+    """Popup no bloqueante para mostrar notificaciones del sistema."""
+    def __init__(self, title: str, message: str, duration_ms: int = 5000):
+        super().__init__(None)
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        
+        from PyQt5.QtWidgets import QVBoxLayout
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 10, 15, 10)
+        
+        lbl_title = QLabel(f"<b>{title}</b>")
+        lbl_title.setStyleSheet("color: #00ffcc; font-size: 13px; font-family: 'Courier New', monospace; background: transparent; border: none;")
+        lbl_msg = QLabel(message)
+        lbl_msg.setWordWrap(True)
+        lbl_msg.setStyleSheet("color: #e5e7eb; font-size: 11px; font-family: 'Courier New', monospace; background: transparent; border: none;")
+        
+        layout.addWidget(lbl_title)
+        layout.addWidget(lbl_msg)
+        
+        self.setStyleSheet("""
+            QWidget {
+                background-color: rgba(0, 20, 40, 240);
+                border: 1px solid rgba(20, 200, 255, 150);
+                border-radius: 6px;
+            }
+        """)
+        self.setFixedWidth(280)
+        self.adjustSize()
+        
+        # Position on top right
+        screen = QApplication.primaryScreen().geometry()
+        self.move(screen.width() - 310, 20)
+        
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self.close)
+        self._timer.start(duration_ms)
+
+        # Fade in
+        from PyQt5.QtCore import QPropertyAnimation
+        from PyQt5.QtWidgets import QGraphicsOpacityEffect
+        self.effect = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self.effect)
+        self.anim = QPropertyAnimation(self.effect, b"opacity")
+        self.anim.setDuration(300)
+        self.anim.setStartValue(0)
+        self.anim.setEndValue(1)
+        self.anim.start()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 class NovaWindow(QWidget):
@@ -507,6 +638,7 @@ class NovaWindow(QWidget):
         # Estado de modelos / sesión
         self._session_tokens  = 0
         self._last_tokens     = 0
+        self._tokens_history  = []
         self._last_model      = "—"
         self._last_provider   = "—"
         self._last_budget_pct = 100.0
@@ -520,12 +652,267 @@ class NovaWindow(QWidget):
         self._bg_overlay.setStyleSheet("background: rgba(0, 12, 28, 220);")
         self._bg_overlay.hide()
 
+        self._current_toast = None
+
         self.setMouseTracking(True)
         self._setup_window()
         self._setup_webview()
         self._setup_strip()
         self._setup_panel()
+        self._setup_focus_columns()
         self._start_timers()
+
+    def _setup_focus_columns(self):
+        from PyQt5.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel
+        from PyQt5.QtCore import Qt
+        
+        # --- COLUMNA IZQUIERDA ---
+        self._focus_left_widget = QWidget(self)
+        self._focus_left_widget.hide()
+        
+        # Card 1: Modelo Activo
+        self._card_model = QFrame(self._focus_left_widget)
+        self._card_model.setStyleSheet(_SS_FOCUS_CARD)
+        lay_model = QVBoxLayout(self._card_model)
+        lay_model.setContentsMargins(8, 8, 8, 8)
+        lbl_m_title = QLabel("MODELO ACTIVO", self._card_model)
+        lbl_m_title.setStyleSheet(_SS_FOCUS_LABEL_TITLE)
+        self._focus_val_model = QLabel("—", self._card_model)
+        self._focus_val_model.setStyleSheet(_SS_FOCUS_LABEL_VALUE)
+        self._focus_val_model.setWordWrap(True)
+        lay_model.addWidget(lbl_m_title)
+        lay_model.addWidget(self._focus_val_model)
+        
+        # Card 2: Consumo de Tokens (Gráfico SVG)
+        self._card_tokens = QFrame(self._focus_left_widget)
+        self._card_tokens.setStyleSheet(_SS_FOCUS_CARD)
+        lay_tokens = QVBoxLayout(self._card_tokens)
+        lay_tokens.setContentsMargins(8, 8, 8, 8)
+        lbl_t_title = QLabel("CONSUMO HISTÓRICO DE TOKENS", self._card_tokens)
+        lbl_t_title.setStyleSheet(_SS_FOCUS_LABEL_TITLE)
+        self._focus_token_chart = QWebEngineView(self._card_tokens)
+        self._focus_token_chart.setFixedSize(220, 110)
+        self._focus_token_chart.setStyleSheet("background:transparent;")
+        self._focus_token_chart.page().setBackgroundColor(Qt.transparent)
+        lay_tokens.addWidget(lbl_t_title)
+        lay_tokens.addWidget(self._focus_token_chart)
+        
+        # Card 3: Métricas de Procesos Activos (CPU/RAM de NOVA)
+        self._card_sys = QFrame(self._focus_left_widget)
+        self._card_sys.setStyleSheet(_SS_FOCUS_CARD)
+        lay_sys = QVBoxLayout(self._card_sys)
+        lay_sys.setContentsMargins(8, 8, 8, 8)
+        lbl_s_title = QLabel("MONITOR DE PROCESO (NOVA)", self._card_sys)
+        lbl_s_title.setStyleSheet(_SS_FOCUS_LABEL_TITLE)
+        self._focus_val_sys = QLabel("CPU (NOVA): 0%\nRAM (NOVA): 0 MB\nChrome/Browser: Inactivo\nBlender: Inactivo", self._card_sys)
+        self._focus_val_sys.setStyleSheet(_SS_FOCUS_LABEL_VALUE)
+        lay_sys.addWidget(lbl_s_title)
+        lay_sys.addWidget(self._focus_val_sys)
+        
+        # --- COLUMNA DERECHA ---
+        self._focus_right_widget = QWidget(self)
+        self._focus_right_widget.hide()
+        
+        # Card 1: Control de Categorías (Skills)
+        self._card_skills = QFrame(self._focus_right_widget)
+        self._card_skills.setStyleSheet(_SS_FOCUS_CARD)
+        lay_skills = QVBoxLayout(self._card_skills)
+        lay_skills.setContentsMargins(8, 8, 8, 8)
+        lbl_sk_title = QLabel("CATEGORÍAS DE SKILLS", self._card_skills)
+        lbl_sk_title.setStyleSheet(_SS_FOCUS_LABEL_TITLE)
+        
+        grid_skills = QGridLayout()
+        grid_skills.setSpacing(6)
+        
+        skills_categories = [
+            ("📁 Archivos", "system"),
+            ("🌐 Web", "web"),
+            ("🏠 Home Assist", "home_assistant"),
+            ("🎵 Música", "media"),
+            ("💻 Dev / Git", "dev"),
+            ("🧠 Cerebro", "cerebro")
+        ]
+        self._skill_btns = []
+        for idx, (label, category) in enumerate(skills_categories):
+            btn = QPushButton(label, self._card_skills)
+            btn.setStyleSheet(_SS_SKILL_BTN)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _, c=category: self._toggle_skill_category(c))
+            grid_skills.addWidget(btn, idx // 2, idx % 2)
+            self._skill_btns.append(btn)
+            
+        lay_skills.addWidget(lbl_sk_title)
+        lay_skills.addLayout(grid_skills)
+        
+        # Card 2: Estado de Integraciones
+        self._card_integrations = QFrame(self._focus_right_widget)
+        self._card_integrations.setStyleSheet(_SS_FOCUS_CARD)
+        lay_int = QVBoxLayout(self._card_integrations)
+        lay_int.setContentsMargins(8, 8, 8, 8)
+        lbl_int_title = QLabel("ESTADO DE INTEGRACIONES", self._card_integrations)
+        lbl_int_title.setStyleSheet(_SS_FOCUS_LABEL_TITLE)
+        
+        self._status_ollama = QLabel("Ollama: CHECKING", self._card_integrations)
+        self._status_qdrant = QLabel("Qdrant DB: CHECKING", self._card_integrations)
+        self._status_n8n = QLabel("n8n Webhook: CHECKING", self._card_integrations)
+        self._status_telegram = QLabel("Telegram: CHECKING", self._card_integrations)
+        
+        lay_int.addWidget(lbl_int_title)
+        for lbl in (self._status_ollama, self._status_qdrant, self._status_n8n, self._status_telegram):
+            lbl.setStyleSheet(_SS_FOCUS_STATUS_WARN)
+            lay_int.addWidget(lbl)
+
+    def _toggle_skill_category(self, category: str):
+        self.show_popup("Filtro de Skill", f"Categoría '{category}' forzada temporalmente para el LLM.")
+
+    def _update_token_chart(self):
+        if not self._ready or not self._focus_mode:
+            return
+            
+        # Generar SVG con los últimos 10 valores de tokens
+        history = self._tokens_history[-10:] if self._tokens_history else [0]
+        max_val = max(history) if max(history) > 0 else 1000
+        
+        points = []
+        width = 200
+        height = 80
+        
+        for i, val in enumerate(history):
+            x = int(i * (width / max(1, len(history) - 1))) if len(history) > 1 else width // 2
+            y = height - int((val / max_val) * height)
+            points.append(f"{x},{y}")
+            
+        points_str = " ".join(points)
+        
+        points_circles = ""
+        for idx, pt in enumerate(points):
+            points_circles += f'<circle cx="{pt.split(",")[0]}" cy="{pt.split(",")[1]}" r="3" class="point"><title>{history[idx]} tokens</title></circle>'
+        
+        chart_html = f"""<!DOCTYPE html>
+        <html><head><style>
+        body {{ margin: 0; background: transparent; overflow: hidden; font-family: monospace; }}
+        svg {{ width: 100%; height: 100%; }}
+        .line {{ fill: none; stroke: #00ffcc; stroke-width: 2; }}
+        .point {{ fill: #00ffcc; stroke: #001428; stroke-width: 2; }}
+        .grid {{ stroke: rgba(20, 140, 200, 0.2); stroke-width: 1; }}
+        .text {{ fill: rgba(20, 200, 255, 0.7); font-size: 8px; }}
+        </style></head><body>
+        <svg viewBox="0 0 {width} {height}">
+            <!-- Grid lines -->
+            <line x1="0" y1="0" class="grid" />
+            <line x1="0" y1="{height//2}" x2="{width}" y2="{height//2}" class="grid" />
+            <line x1="0" y1="{height}" x2="{width}" y2="{height}" class="grid" />
+            
+            <!-- Sparkline -->
+            <polyline points="{points_str}" class="line" />
+            
+            <!-- Points -->
+            {points_circles}
+            
+            <!-- Max Label -->
+            <text x="5" y="10" class="text">Max: {max_val}</text>
+        </svg>
+        </body></html>"""
+        
+        self._focus_token_chart.setHtml(chart_html)
+
+    def _update_system_stats(self):
+        if not self._focus_mode:
+            return
+            
+        import psutil
+        try:
+            # Stats de NOVA
+            proc = psutil.Process()
+            cpu_pct = proc.cpu_percent(interval=None)
+            ram_mb = proc.memory_info().rss // (1024 * 1024)
+            
+            # Chequeos de otros vinculados (Blender, Gestos, Playwright/Chrome)
+            blender_active = "Activo" if any("blender" in p.name().lower() for p in psutil.process_iter()) else "Inactivo"
+            chrome_active = "Activo" if any("chrome" in p.name().lower() for p in psutil.process_iter()) else "Inactivo"
+            
+            self._focus_val_sys.setText(
+                f"CPU (NOVA): {cpu_pct:.1f}%\n"
+                f"RAM (NOVA): {ram_mb} MB\n"
+                f"Chrome/Browser: {chrome_active}\n"
+                f"Blender: {blender_active}"
+            )
+        except Exception:
+            pass
+
+    def _check_port_open(self, host: str, port: int) -> bool:
+        import socket
+        try:
+            socket.setdefaulttimeout(0.3)
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((host, port))
+            return True
+        except Exception:
+            return False
+
+    def _check_integrations_async(self):
+        import threading
+        def worker():
+            ollama_ok = self._check_port_open("localhost", 11434)
+            qdrant_ok = self._check_port_open("localhost", 6333)
+            n8n_ok = self._check_port_open("localhost", 5678)
+            telegram_ok = self._check_port_open("api.telegram.org", 443)
+            
+            # Emitir al hilo principal
+            from PyQt5.QtCore import QMetaObject, Q_ARG
+            QMetaObject.invokeMethod(self, "_update_integrations_ui", 
+                                     Qt.QueuedConnection,
+                                     Q_ARG(bool, ollama_ok),
+                                     Q_ARG(bool, qdrant_ok),
+                                     Q_ARG(bool, n8n_ok),
+                                     Q_ARG(bool, telegram_ok))
+        threading.Thread(target=worker, daemon=True).start()
+
+    from PyQt5.QtCore import pyqtSlot
+    
+    @pyqtSlot(bool, bool, bool, bool)
+    def _update_integrations_ui(self, ollama_ok, qdrant_ok, n8n_ok, telegram_ok):
+        if not self._focus_mode:
+            return
+        
+        if ollama_ok:
+            self._status_ollama.setText("Ollama: ONLINE")
+            self._status_ollama.setStyleSheet(_SS_FOCUS_STATUS_OK)
+        else:
+            self._status_ollama.setText("Ollama: OFFLINE")
+            self._status_ollama.setStyleSheet(_SS_FOCUS_STATUS_ERR)
+            
+        if qdrant_ok:
+            self._status_qdrant.setText("Qdrant DB: ONLINE")
+            self._status_qdrant.setStyleSheet(_SS_FOCUS_STATUS_OK)
+        else:
+            self._status_qdrant.setText("Qdrant DB: OFFLINE")
+            self._status_qdrant.setStyleSheet(_SS_FOCUS_STATUS_ERR)
+            
+        if n8n_ok:
+            self._status_n8n.setText("n8n Webhook: ONLINE")
+            self._status_n8n.setStyleSheet(_SS_FOCUS_STATUS_OK)
+        else:
+            self._status_n8n.setText("n8n Webhook: OFFLINE")
+            self._status_n8n.setStyleSheet(_SS_FOCUS_STATUS_ERR)
+            
+        if telegram_ok:
+            self._status_telegram.setText("Telegram: ONLINE")
+            self._status_telegram.setStyleSheet(_SS_FOCUS_STATUS_OK)
+        else:
+            self._status_telegram.setText("Telegram: DISCONNECTED")
+            self._status_telegram.setStyleSheet(_SS_FOCUS_STATUS_ERR)
+
+    def _on_focus_tick(self):
+        if self._focus_mode:
+            self._update_system_stats()
+            self._update_token_chart()
+            self._check_integrations_async()
+
+    def show_popup(self, title: str, message: str, duration_ms: int = 5000):
+        """Muestra una notificación emergente en la pantalla."""
+        self._current_toast = NotificationToast(title, message, duration_ms)
+        self._current_toast.show()
 
     # ── Ventana ───────────────────────────────────────────────────────────────
 
@@ -627,6 +1014,7 @@ class NovaWindow(QWidget):
         if tokens:
             self._last_tokens     = tokens
             self._session_tokens += tokens
+            self._tokens_history.append(tokens)
             self._call_count     += 1
         if provider:
             self._last_provider = provider[:14]
@@ -637,6 +1025,16 @@ class NovaWindow(QWidget):
             m = model.replace("llama-", "llama").replace("-versatile", "").replace("-instant", "ᵢ")
             m = m.replace("-preview", "ₚ").replace(":free", "").replace("google/", "")
             self._last_model = m[:18]
+
+        # Actualizar card de modelo del Focus Mode si existe
+        if hasattr(self, "_focus_val_model") and self._focus_val_model:
+            self._focus_val_model.setText(
+                f"Mod: {self._last_model}\n"
+                f"Prov: {self._last_provider}\n"
+                f"Última: {self._last_tokens:,} tk\n"
+                f"Sesión: {self._session_tokens:,} tk\n"
+                f"Calls: {self._call_count}"
+            )
 
         budget_icon = "●" if self._last_budget_pct > 30 else "▲" if self._last_budget_pct > 10 else "▼"
         line1 = f"▸ {self._last_model:<18}  {self._last_provider}"
@@ -676,8 +1074,11 @@ class NovaWindow(QWidget):
             sw = screen.width()
             sh = screen.height()
             
-            col_w = min(1000, sw - 100)
-            pad_x = (sw - col_w) // 2
+            # Dimensiones del Layout de 3 columnas
+            side_w = 260
+            center_w = min(800, max(500, sw - side_w * 2 - 100))
+            total_layout_w = center_w + side_w * 2 + 40
+            start_x = (sw - total_layout_w) // 2
             
             # Window size (full screen)
             self.setMinimumSize(sw, sh)
@@ -688,31 +1089,44 @@ class NovaWindow(QWidget):
             # Overlay
             self._bg_overlay.setGeometry(0, 0, sw, sh)
             
-            # Animation
-            anim_h = 200
-            self._view.setGeometry(pad_x, 50, col_w, anim_h)
+            # --- COLUMNA IZQUIERDA ---
+            self._focus_left_widget.setGeometry(start_x, 0, side_w, sh)
+            self._card_model.setGeometry(0, 80, side_w, 95)
+            self._card_tokens.setGeometry(0, 190, side_w, 160)
+            self._card_sys.setGeometry(0, 365, side_w, 140)
+            
+            # --- COLUMNA CENTRAL ---
+            center_x = start_x + side_w + 20
+            anim_w = 280
+            anim_h = 320
+            self._view.setGeometry(center_x + (center_w - anim_w)//2, 60, anim_w, anim_h)
             self._view.setZoomFactor(1.0)
             
-            # Metrics
-            self._metrics_bar.setGeometry(pad_x, 50 + anim_h, col_w, 20)
+            self._metrics_bar.setGeometry(center_x, 60 + anim_h, center_w, 20)
             
-            # Panel (Log + Input)
-            log_y = 50 + anim_h + 30
+            log_y = 60 + anim_h + 30
             log_h = sh - log_y - 120
-            pad = 10
-            self._log.setGeometry(pad_x + pad, log_y, col_w - pad*2, log_h)
+            self._log.setGeometry(center_x, log_y, center_w, log_h)
             
             y_in = log_y + log_h + 20
             btn_w = 40
             badge_h = 16
             
-            self._attach_badge.setGeometry(pad_x + pad, y_in - badge_h - 2, col_w - pad*2, badge_h)
-            self._input.setGeometry(pad_x + pad, y_in, col_w - btn_w*3 - pad*2, 40)
-            self._attach_btn.setGeometry(pad_x + col_w - btn_w*3, y_in, 40, 40)
-            self._send_btn.setGeometry(pad_x + col_w - btn_w*2, y_in, 40, 40)
-            self._close_btn.setGeometry(pad_x + col_w - btn_w, y_in, 40, 40)
+            self._attach_badge.setGeometry(center_x, y_in - badge_h - 2, center_w, badge_h)
             
-            # Chevron & Strip (hide or move)
+            self._input.setGeometry(center_x, y_in, center_w - btn_w*4 - 10, 40)
+            self._focus_btn.setGeometry(center_x + center_w - btn_w*4, y_in, 40, 40)
+            self._attach_btn.setGeometry(center_x + center_w - btn_w*3, y_in, 40, 40)
+            self._send_btn.setGeometry(center_x + center_w - btn_w*2, y_in, 40, 40)
+            self._close_btn.setGeometry(center_x + center_w - btn_w, y_in, 40, 40)
+            
+            # --- COLUMNA DERECHA ---
+            right_x = center_x + center_w + 20
+            self._focus_right_widget.setGeometry(right_x, 0, side_w, sh)
+            self._card_skills.setGeometry(0, 80, side_w, 180)
+            self._card_integrations.setGeometry(0, 275, side_w, 230)
+            
+            # Chevron & Strip (ocultar)
             self._chevron.setGeometry(0, 0, 0, 0)
             self._strip.setGeometry(0, 0, 0, 0)
             
@@ -764,8 +1178,31 @@ class NovaWindow(QWidget):
         if self._focus_mode:
             self._old_geometry = self.geometry()
             self._bg_overlay.show()
+            self._focus_left_widget.show()
+            self._focus_right_widget.show()
+            # Asegurar visibilidad de controles del panel
+            self._log.show()
+            self._input.show()
+            self._focus_btn.show()
+            self._attach_btn.show()
+            self._send_btn.show()
+            self._close_btn.show()
+            
+            # Updates iniciales
+            self._update_system_stats()
+            self._update_token_chart()
+            self._check_integrations_async()
         else:
             self._bg_overlay.hide()
+            self._focus_left_widget.hide()
+            self._focus_right_widget.hide()
+            if not self._panel_open:
+                self._log.hide()
+                self._input.hide()
+                self._focus_btn.hide()
+                self._attach_btn.hide()
+                self._send_btn.hide()
+                self._close_btn.hide()
             if hasattr(self, '_old_geometry'):
                 self.setGeometry(self._old_geometry)
         self._relayout()
@@ -924,11 +1361,13 @@ class NovaWindow(QWidget):
             mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                     "webp": "image/webp", "gif": "image/gif", "bmp": "image/bmp"}.get(ext.lstrip("."), "image/png")
             self._pending_attachment = {"name": name, "type": "image", "mime": mime, "content": b64}
+            self.show_popup("Imagen adjunta", f"He detectado que cargaste {name}. Dime en el chat qué deseas que haga con ella.")
             self.add_log("📎", f"Imagen adjunta: {name}")
 
         elif ext == ".pdf":
             text = self._read_pdf(path)
             self._pending_attachment = {"name": name, "type": "text", "content": text}
+            self.show_popup("PDF adjunto", f"He detectado el PDF {name}. Dime qué necesitas hacer.")
             self.add_log("📎", f"PDF adjunto: {name} ({len(text):,} chars)")
 
         elif ext in self._TEXT_EXTS or ext == "":
@@ -936,6 +1375,7 @@ class NovaWindow(QWidget):
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read(20_000)   # máx 20k chars
                 self._pending_attachment = {"name": name, "type": "text", "content": content}
+                self.show_popup("Archivo adjunto", f"He detectado que cargaste {name}. Dime qué necesitas hacer con este documento.")
                 self.add_log("📎", f"Archivo adjunto: {name} ({len(content):,} chars)")
             except Exception as e:
                 self.add_log("⚠", f"No pude leer {name}: {e}")
@@ -1116,6 +1556,11 @@ class NovaWindow(QWidget):
     def _start_timers(self):
         QTimer(self, timeout=self._poll_queue, interval=80).start()
         QTimer(self, timeout=self._update_drag, interval=16).start()
+        
+        # Timer de actualización de Focus Mode (2000 ms)
+        self._focus_timer = QTimer(self)
+        self._focus_timer.timeout.connect(self._on_focus_tick)
+        self._focus_timer.start(2000)
 
     def _update_drag(self):
         if not self._dragging:
@@ -1151,6 +1596,11 @@ class NovaWindow(QWidget):
                 mode = state["focus_mode"]
                 if mode != self._focus_mode:
                     self.toggle_focus_mode()
+                    
+            # Interfaz de Popups
+            if "popup" in state:
+                p = state["popup"]
+                self.show_popup(p.get("title", "NOVA"), p.get("message", ""), p.get("duration", 5000))
                     
             # Log de conversación
             if "response_text" in state and state["response_text"]:

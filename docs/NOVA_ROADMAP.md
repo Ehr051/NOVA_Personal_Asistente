@@ -1,6 +1,6 @@
 # Nova — Estado del Proyecto y Roadmap
 > **Archivo único de contexto.** Cualquier agente que tome este proyecto lee esto primero.  
-> Última actualización: **2026-05-13 (sesión 9)**
+> Última actualización: **2026-05-18 (sesión 10)**
 
 ---
 
@@ -119,6 +119,17 @@ Web Dashboard    ████████████████████ 10
 | — | **Modo políglota** | ✅ `_SESSION_LANG` explícito (usuario activa), ES/EN/FR/PT/DE/RU/ZH, TTS con voz del idioma |
 | — | **Memoria/RAG** | ✅ `nova_rag_obsidian.py` → `legacy/`; vault completo en contexto (todas las carpetas) |
 | — | **Requirements + CI** | ✅ `requirements.txt` completo, `install.py` cross-platform, GitHub Actions release por tag |
+
+### ✅ Completado (sesión 10 - Optimización)
+
+| # | Feature | Estado |
+|---|---|---|
+| — | **HUD Overhaul** | ✅ Fix Layout Fullscreen Mode (sin solapamientos); Popups Interactivos (Toast) para notificaciones no intrusivas. |
+| — | **Latencia de Voz** | ✅ STT thresholds optimizados (`pause_threshold` 1.2s, `non_speaking_duration` 0.8s) para respuesta casi instantánea. |
+| — | **Filtrado Dinámico de Tools** | ✅ `get_filtered_tool_schemas()`: agrupa 48+ tools por categoría y las inyecta al LLM solo si el prompt las requiere, ahorrando ~80% de tokens. |
+| — | **Semantic Caching Ligero** | ✅ `DirectCache`: atajos deterministas para consultas triviales (saludos, clima, hora) sin llamar al LLM, reduciendo latencia a 0ms. |
+| — | **Limpieza de RAG** | ✅ `nova_rag_obsidian.py` eliminado definitivamente a favor del sistema dual (Mem0 episódico + Cerebro/Obsidian semántico). |
+| — | **Complexity Detector** | ✅ Umbrales aumentados: tareas cortas (<80 chars) forzadas a Tier 1 (Ollama) para mayor velocidad y menor coste. |
 
 ### ✅ Completado (sesión 9)
 

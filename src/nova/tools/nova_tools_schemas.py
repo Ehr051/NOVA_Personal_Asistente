@@ -65,3 +65,45 @@ def get_tool_schemas_subset(names: list[str]) -> list[dict]:
     from nova.tools.nova_skills import _TOOL_CATALOG
     sub = {k: v for k, v in _TOOL_CATALOG.items() if k in names}
     return get_tool_schemas(sub)
+
+
+_TOOL_CATEGORIES = {
+    "home_assistant": ["ha_", "luces", "luz", "aspiradora", "vacuum", "dispositivo", "escena", "encender", "apagar", "atenuar"],
+    "system": ["abrir", "cerrar", "volumen", "brillo", "bateria", "cpu", "memoria", "portapapeles", "tecla", "escribir", "screenshot", "pantalla", "app"],
+    "web": ["buscar", "navegar", "url", "noticias", "clima", "tiempo", "internet"],
+    "media": ["reproducir", "pausar", "spotify", "musica", "youtube", "camara", "foto", "video"],
+    "dev": ["git", "docker", "python", "script", "codigo", "lsp", "workspace", "terminal", "bash", "comando"]
+}
+
+def get_filtered_tool_schemas(prompt: str) -> list[dict]:
+    """
+    Filtra los schemas de herramientas según el prompt para ahorrar tokens.
+    Mantiene siempre herramientas core, y añade módulos pesados solo si hay keywords.
+    """
+    from nova.tools.nova_skills import _TOOL_CATALOG
+    prompt_lower = prompt.lower()
+    
+    active_keys = set(["hora_actual", "fecha_actual", "crear_recordatorio"])
+    active_categories = set()
+    
+    for cat, keywords in _TOOL_CATEGORIES.items():
+        if any(kw in prompt_lower for kw in keywords):
+            active_categories.add(cat)
+            
+    # Si no se detectó ninguna categoría fuerte, devolver todas (fallback conservador)
+    if not active_categories:
+        return get_tool_schemas()
+
+    for tool_name in _TOOL_CATALOG.keys():
+        if "ha_" in tool_name and "home_assistant" in active_categories:
+            active_keys.add(tool_name)
+        elif tool_name in ["abrir_app", "cerrar_app", "controlar_volumen", "controlar_brillo", "leer_portapapeles", "simular_tecla", "escribir_texto", "tomar_screenshot"] and "system" in active_categories:
+            active_keys.add(tool_name)
+        elif tool_name in ["buscar_web", "clima_actual", "leer_noticias"] and "web" in active_categories:
+            active_keys.add(tool_name)
+        elif tool_name in ["reproducir_musica", "pausar_musica", "tomar_foto", "grabar_audio"] and "media" in active_categories:
+            active_keys.add(tool_name)
+        elif tool_name in ["ejecutar_script", "git_status", "docker_ps", "skill_lsp_workspace", "ejecutar_comando"] and "dev" in active_categories:
+            active_keys.add(tool_name)
+            
+    return get_tool_schemas_subset(list(active_keys))

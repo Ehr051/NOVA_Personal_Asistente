@@ -991,11 +991,10 @@ def _calibrate_recognizer(recognizer: sr.Recognizer, mic: sr.Microphone) -> None
     recognizer.energy_threshold *= factor
     recognizer.dynamic_energy_threshold = True   # se sigue ajustando mientras escucha
     recognizer.dynamic_energy_adjustment_damping = 0.10  # adapta lento (más estable)
-    # Pausa más larga antes de cortar — evita que corte en medio de una oración
-    # 2.5s de pausa antes de cortar — evita que corte mid-sentence
-    recognizer.pause_threshold = float(os.getenv("PAUSE_THRESHOLD", "2.5"))
-    # 1.8s de silencio final antes de cerrar la frase
-    recognizer.non_speaking_duration = float(os.getenv("NON_SPEAKING_DURATION", "1.8"))
+    # Pausa más corta antes de cortar para reducir latencia (era 2.5s)
+    recognizer.pause_threshold = float(os.getenv("PAUSE_THRESHOLD", "1.2"))
+    # Silencio final más corto (era 1.8s)
+    recognizer.non_speaking_duration = float(os.getenv("NON_SPEAKING_DURATION", "0.8"))
 
     log.info("[voz] Umbral inicial: %.0f (TV x%s) — pausa=%.1fs",
              recognizer.energy_threshold, factor, recognizer.pause_threshold)
@@ -1445,6 +1444,16 @@ def _nova_loop(hud: NovaHUD, stop_event: threading.Event) -> None:
                 response_text=skill_resp,
                 model_info="[SKILL LOCAL]",
             )
+            
+            # Lanzar Popups según la acción de la skill
+            _lr = skill_resp.lower()
+            if "imagen generada" in _lr:
+                hud.put_state(popup={"title": "Nova Image", "message": "La imagen ha sido generada y abierta."})
+            elif "detector" in _lr and ("iniciad" in _lr or "activ" in _lr):
+                hud.put_state(popup={"title": "Percepción Visual", "message": "Los sensores de visión y gestos están activos."})
+            elif "cámara" in _lr and ("activ" in _lr or "encend" in _lr):
+                hud.put_state(popup={"title": "Cámara", "message": "Feed de cámara en vivo activado."})
+
             history.append({"role": "user",      "content": user_input})
             history.append({"role": "assistant", "content": skill_resp})
             if _daemon_client is None:

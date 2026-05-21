@@ -127,6 +127,15 @@ _PROVIDER_CTX_CHARS: dict[str, int] = {
 _MAX_SINGLE_MSG_CHARS = 6_000   # ningún mensaje individual supera esto
 
 
+def _caveman_compress(text: str) -> str:
+    """Elimina palabras vacías (stop words) para ahorrar tokens en el historial pasado."""
+    stop_words = {"el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del", 
+                  "a", "al", "en", "por", "para", "con", "sin", "sobre", "que", "qué", 
+                  "y", "o", "u", "e", "es", "son", "fue", "fueron", "ser", "estar", "por favor"}
+    words = text.split()
+    return " ".join(w for w in words if w.lower() not in stop_words)
+
+
 def _trim_messages(
     messages: list[dict],
     provider: str = "_default",
@@ -174,11 +183,22 @@ def _trim_messages(
     kept: list[dict] = []
     used = len(str(last_msg.get("content", "")))
     for m in reversed(candidates):
-        chars = len(str(m.get("content", "")))
+        compressed_content = _caveman_compress(str(m.get("content", "")))
+        chars = len(compressed_content)
         if used + chars > remaining:
             break
-        kept.insert(0, m)
+            
+        m_copy = dict(m)
+        m_copy["content"] = compressed_content
+        kept.insert(0, m_copy)
         used += chars
+
+    if len(kept) < len(candidates):
+        # Compresión pasiva: avisar al LLM que se cortó el contexto para evitar alucinaciones
+        kept.insert(0, {
+            "role": "system", 
+            "content": f"[SYSTEM_NOTE: se omitieron {len(candidates) - len(kept)} mensajes antiguos por límite de memoria a corto plazo]"
+        })
 
     return system_msgs + kept + [last_msg]
 
@@ -564,25 +584,76 @@ class ModelUsageTracker:
 # ─── ComplexityDetector ──────────────────────────────────────────────────────
 
 class ComplexityDetector:
-    TIER3_LEN = 300
-    TIER2_LEN = 100
+    # Aumentar límites para que más queries se resuelvan con Tier 1 (modelos gratuitos y rápidos)
+    TIER3_LEN = 500
+    TIER2_LEN = 150
 
     @staticmethod
     def detect(prompt: str) -> int:
         lower  = prompt.lower()
         length = len(prompt)
 
-        if length < 60 and any(kw in lower for kw in _SIMPLE_TRIGGERS):
-            return 1
+        # Si el usuario explícitamente pide algo súper complejo
         if length >= ComplexityDetector.TIER3_LEN and any(kw in lower for kw in _HIGH_COMPLEXITY):
             return 3
+        
+        # Consultas de uso común que podrían tener una palabra de _HIGH_COMPLEXITY
+        # pero son muy cortas, deberían ser Tier 1
+        if length < 80:
+            return 1
+            
         if length >= ComplexityDetector.TIER3_LEN:
             return 2
+            
         if any(kw in lower for kw in _HIGH_COMPLEXITY):
             return 2
+            
         if length >= ComplexityDetector.TIER2_LEN:
             return 2
+            
         return 1
+
+
+import re
+
+class DirectCache:
+    """
+    Caché heurística rápida (Semantic Caching ligero) para consultas triviales.
+    Evita el round-trip al LLM para preguntas repetitivas donde el resultado es determinista
+    o se puede resolver con una tool local instantánea.
+    """
+    @staticmethod
+    def check(prompt: str) -> str | None:
+        p = prompt.lower().strip()
+        p = re.sub(r'[^\w\s]', '', p) # quitar puntuación
+        
+        if p in ("hola", "hola nova", "buenos dias", "buenas tardes", "buenas noches", "hello", "hi"):
+            return "Hola, Señor. Estoy a su disposición."
+        if p in ("gracias", "gracias nova", "muchas gracias", "thank you", "thanks"):
+            return "De nada, Señor."
+        if p in ("como estas", "como estas nova", "que tal"):
+            return "Sistemas en línea y operando normalmente, Señor."
+        if p in ("adios", "chau", "hasta luego", "nos vemos", "bye", "goodbye"):
+            return "Hasta luego, Señor."
+            
+        # Para "qué hora es" o "qué día es", en vez de llamar al LLM, 
+        # devolvemos un flag especial o ejecutamos la tool directamente si es posible.
+        # Como estamos en el router, es mejor devolver el texto si podemos.
+        if "que hora es" in p or "dime la hora" in p or "hora actual" in p:
+            try:
+                from datetime import datetime
+                return f"Son las {datetime.now().strftime('%H:%M')}."
+            except Exception:
+                pass
+                
+        if "que dia es" in p or "dime la fecha" in p or "fecha actual" in p:
+            try:
+                from datetime import datetime
+                return f"Hoy es {datetime.now().strftime('%A %d de %B de %Y')}."
+            except Exception:
+                pass
+
+        return None
 
 
 # ─── NovaRouter ────────────────────────────────────────────────────────────
@@ -765,6 +836,20 @@ class NovaRouter:
         temperature: float = 0.7,
     ) -> dict:
         last_msg     = self._last_user(messages)
+        
+        cached_resp = DirectCache.check(last_msg)
+        if cached_resp:
+            return {
+                "response":              cached_resp,
+                "model":                 "direct_cache",
+                "provider":              "Cache",
+                "tier":                  0,
+                "desired_tier":          0,
+                "tokens_used":           0,
+                "session_tokens":        self.tracker.total_tokens,
+                "budget_remaining_pct":  round(self.tracker.remaining_pct(), 1),
+            }
+            
         desired_tier = force_tier or ComplexityDetector.detect(last_msg)
         actual_tier  = self._apply_budget_cap(desired_tier)
 
@@ -809,6 +894,12 @@ class NovaRouter:
         Si ningún proveedor acepta stream, devuelve la respuesta completa en un único yield.
         """
         last_msg     = self._last_user(messages)
+        
+        cached_resp = DirectCache.check(last_msg)
+        if cached_resp:
+            yield cached_resp
+            return
+            
         desired_tier = force_tier or ComplexityDetector.detect(last_msg)
         actual_tier  = self._apply_budget_cap(desired_tier)
 
