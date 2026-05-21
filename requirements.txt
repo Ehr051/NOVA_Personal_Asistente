@@ -15,8 +15,7 @@ pygame>=2.0.0
 # PyAudio  ← instalar manualmente si falla: pip install PyAudio
 #            Linux: sudo apt install portaudio19-dev && pip install PyAudio
 #            Windows: pip install PyAudio --only-binary :all:
-PyAudio
-librosa
+
 # ─── HUD / GUI ────────────────────────────────────────────────────────────────
 PyQt5
 PyQtWebEngine
@@ -53,4 +52,4 @@ numpy
 # ─── Windows only ─────────────────────────────────────────────────────────────
 # pywin32     ← requiere post-install: python -m pywin32_postinstall -install
 # pycaw       ← control volumen Windows
-sounddevice ← audio alternativo a PyAudio en Windows
+# sounddevice ← audio alternativo a PyAudio en Windows
